@@ -1,81 +1,197 @@
-# CaloIslands V2 — base local de Vaelkor
+# CaloIslands V2
 
-Plugin nuevo para Paper 1.21.8 y Java 21. El registro empieza vacío: ningún nombre, mundo, límite ni coordenada se crea por defecto. El documento operativo canónico está en `../GoldenRPG/docs/GoldenRPG_Vaelkor_CaloIslands_Roadmap_Actualizado_2026-09-24.md`.
+Plugin de mundo y administración territorial para Vaelkor.
 
-## Implementado
+CaloIslands gestiona regiones, ciudades, protección y persistencia local. La primera etapa funciona en un único servidor; la arquitectura multiserver queda para la fase final.
 
-- MariaDB/MySQL con HikariCP, esquema propio configurado en `config.yml` y migración versionada `calo_schema_version` v2. Tablas `calo_regions` y `calo_cities` con IDs estables, versión incremental, índices y claves foráneas de ciudad a región y mundo. La migración v2 añade `world_name` a ciudades existentes, lo rellena desde su región y conserva sus coordenadas/versiones. `calo_world_locks` serializa el registro de límites por mundo.
-- Regiones cúbicas vinculadas a un mundo por nombre; se rechazan solapamientos en el mismo mundo. Una ciudad guarda mundo y ubicación dentro de su región; el mundo coincide con su región por validación de servicio y clave foránea compuesta. Repetir un alta idéntica, una activación ya aplicada, el mismo tamaño o la misma ubicación devuelve el registro existente sin aumentar su versión.
-- El alta y cambio de límites exigen un mundo cargado y validan sus alturas reales tanto en el servicio como en el comando, con `World.getMinHeight()`/`getMaxHeight()`. Crear o mover una ciudad también exige su mundo cargado. Después del reinicio una región ya registrada puede esperar a que cargue su mundo; repetir una operación idéntica no necesita cargarlo.
-- Activación y desactivación persistentes. Una región activa funciona cuando su mundo está cargado; si se descarga, queda pendiente y vuelve a funcionar al cargarse, sin alterar el dato persistente.
-- Entrada nueva a una región inactiva bloqueada por `PlayerMoveEvent`, `PlayerTeleportEvent` y `PlayerPortalEvent`; un ocupante puede moverse dentro de ella o salir. La barrera se registra siempre; el acceso usa una copia en memoria cargada desde MariaDB, sin SQL por movimiento. Esta conducta requiere prueba en servidor real. Respawn/join dentro de la región y viaje como pasajero necesitan una política de ubicación segura antes de imponer un traslado automático.
-- Mensajes administrativos y nombre/lore de la herramienta en `messages.yml`, validados al iniciar. `wand.material` en `config.yml` admite un material de ítem válido y usa `WOODEN_AXE` por defecto. La herramienta se reconoce por una marca PDC, no por su nombre, y cancela interacción, daño, rotura y colocación de bloques.
-- `/calo region wand|selection|preview|clear|list|info|create|resize|activate|deactivate|delete`, `/calo city list|info|create|move|delete` y `/calo here`, permiso `caloislands.admin` (op por defecto). El selector propio es temporal por UUID y se usa solo como respaldo cuando WorldEdit no está habilitado. Después de crear o redimensionar con éxito se limpia la selección activa. Antes de cambiar límites o borrar una región hay que desactivarla; antes de borrarla hay que retirar sus ciudades.
-- Con el selector de respaldo, al marcar ambas esquinas en el mismo mundo aparece un contorno de partículas con las 12 aristas y las dos esquinas destacadas, visible solo para quien selecciona. El actionbar muestra mundo, Posición 1, Posición 2 y dimensiones. `/calo region preview` alterna la vista; `/calo region clear`, creación o resize exitoso y desconexión la detienen. Una tarea síncrona de Bukkit renderiza sin SQL ni cambios de bloques. Solo muestrea el contorno, nunca el volumen.
-- La selección nueva usa `fullheight` por defecto: los límites Y finales vienen de `World.getMinHeight()` y `World.getMaxHeight() - 1`. `/calo region mode exact` conserva las Y elegidas; `/calo region mode fullheight` restaura el modo completo. `/calo region selection` muestra el tamaño final; el contorno propio lo muestra cuando se usa el respaldo. El modo es temporal por UUID y vuelve a `fullheight` tras `clear`, creación o resize. Las regiones ya guardadas no cambian; solo un `resize` explícito las actualiza.
-- Una capa local de protección consulta la copia de regiones en memoria y cancela acciones configuradas en regiones inactivas o activas: romper/colocar/interactuar con bloques, abrir contenedores, manipular entidades, cubos, bloques y daño afectados por explosiones, pistones, daño PvP/PvE, aparición de criaturas y cambios de bloques por entidades. Las explosiones retiran de su lista los bloques protegidos y cancelan el daño dentro de una región protegida. Los listeners no realizan SQL ni revierten cancelaciones de otros plugins. La entrada en regiones inactivas se sigue bloqueando por movimiento, teletransporte y portal.
+## Requisitos
 
-Flujo administrativo, con identificadores y ubicaciones que debe suministrar el staff según mapas aprobados:
+* Minecraft 1.21.8
+* Java 21
+* Paper o UniverseSpigot
+* MariaDB/MySQL
+* HikariCP
+* WorldEdit opcional
+
+## Funcionalidades
+
+* Regiones cúbicas asociadas a un mundo.
+* IDs estables y versiones incrementales.
+* Validación de límites y solapamientos.
+* Activación y desactivación persistente.
+* Recuperación después de reiniciar.
+* Ciudades vinculadas a regiones.
+* Selección principal mediante WorldEdit.
+* Herramienta propia de selección como respaldo.
+* Modos de altura `fullheight` y `exact`.
+* Previsualización de límites con partículas.
+* Protección local de regiones.
+* Caché en memoria para eventos, sin SQL por interacción.
+* Mensajes centralizados mediante `messages.yml`.
+
+## Persistencia
+
+CaloIslands utiliza una base MariaDB/MySQL separada de GoldenRPG.
+
+```yaml
+schema-version: 2
+
+database:
+  host: localhost
+  port: 3306
+  name: caloislands
+  username: CHANGE_ME
+  password: CHANGE_ME
+  pool:
+    maximum-size: 4
+    connection-timeout-ms: 10000
+```
+
+No utiliza SQLite, no comparte credenciales con GoldenRPG y no escribe directamente en sus tablas.
+
+## Selección de regiones
+
+Cuando WorldEdit está disponible, se utiliza como selector principal:
+
+1. Seleccionar las dos esquinas.
+2. Elegir el modo de altura.
+3. Crear la región.
+
+Como alternativa:
 
 ```text
 /calo region wand
-# Click izquierdo en Posición 1 y derecho en Posición 2
-/calo region mode fullheight
-# Para limitar Y a las esquinas: /calo region mode exact
-# El contorno y el actionbar aparecen automáticamente.
-/calo region preview
-# El mismo comando vuelve a activar la vista si se apagó.
-/calo region selection
-/calo region create <regionId>
-# Para editar: /calo region deactivate <regionId>, nueva selección y /calo region resize <regionId>
-# Situarse dentro de la región:
-/calo city create <cityId> <regionId>
-# Situarse en la nueva ubicación:
-/calo city move <cityId>
 ```
 
-`/calo city create <cityId> <regionId>` usa la ubicación exacta del administrador y exige estar en el mundo y dentro de los límites de esa región. `/calo city info <cityId>` muestra región, mundo, coordenadas, estado activo/operativo de la región y versión de la ciudad. `/calo city list` muestra cada ID con región y mundo; `move` guarda la ubicación actual dentro de la misma región, y `delete` quita solo la ciudad. La ayuda y el autocompletado muestran subcomandos, IDs de ciudades y regiones. En instalaciones con `messages.yml` anterior, las claves `city-info-v2` y `city-updated-v2` se toman del JAR para mostrar todos los campos hasta que se personalicen.
+La herramienta propia usa clic izquierdo y derecho para marcar las posiciones.
 
-`/calo region selection` muestra modo, ambos mundos/posiciones y las dimensiones finales cuando son válidas y el mundo está cargado. Crear o redimensionar exige ambas esquinas en el mismo mundo; el resize además exige el mundo de la región. Los límites se normalizan en los tres ejes, se validan contra la altura del mundo cargado y se rechazan solapamientos. Si falla una operación, la selección queda disponible para corregirla.
+La selección no modifica bloques.
 
-La sección `preview` de `config.yml` controla `edge-particle`, `corner-particle`, `interval-ticks` y `max-particles-per-frame`. Los valores incluidos son `END_ROD`, `FLAME`, 10 ticks y un máximo de 192 partículas por jugador/fotograma; se usan también cuando una configuración V2 anterior carece de esa sección. Se aceptan solo partículas sin datos adicionales, intervalos de 5 a 40 ticks y presupuestos de 30 a 240. Incluso una región enorme usa como máximo el presupuesto configurado; la densidad de cada arista baja en vez de recorrer bloques interiores. Las partículas se envían con `Player.spawnParticle`, no a todos los jugadores con `World.spawnParticle`. La selección y el estado de preview no se guardan en MariaDB.
+## Modos de altura
 
-## Selección WorldEdit y protección local
+```text
+/calo region mode fullheight
+/calo region mode exact
+```
 
-Con WorldEdit habilitado, `//sel cuboid` y `//wand` marcan las esquinas. `/calo region selection` muestra el área efectiva; `/calo region mode fullheight|exact` determina Y. `/calo region create <id>` y `/calo region resize <id>` leen la selección de WorldEdit y solo la limpian después de guardar correctamente. `/calo region clear` la cancela. `/calo region wand` indica usar la herramienta de WorldEdit y `/calo region preview` remite a su visualización. Si falta WorldEdit o está desactivado, la herramienta y el contorno propios siguen disponibles como respaldo explícito. El JAR de WorldEdit no se incluye en CaloIslands.
+`fullheight` utiliza toda la altura válida del mundo.
 
-La protección local también cancela colocación múltiple, colocación de entidades y dispensadores que actúen dentro o hacia una región protegida, y congela cambios de señal redstone dentro de ella. El permiso `caloislands.protection.bypass` permite omitir solo las restricciones de acciones locales. El estado de WorldEdit, Lands y WorldGuard debe aceptarse en servidor real; ninguna cancelación externa se revierte.
+`exact` conserva las alturas seleccionadas.
 
-El bypass se consulta en una sola función para romper, colocar bloques simples y múltiples, colocar entidades/marcos/soportes y usar cubos, sin distinguir entre supervivencia y creativo. CaloIslands no vuelve a denegar esas acciones al titular del permiso; WorldGuard, Lands y otros plugins siguen pudiendo cancelar sus propios eventos. Si la colocación continúa bloqueada, revisar la cancelación o `canBuild` en el servidor y los permisos externos.
+## Previsualización
 
-Se impide abrir y mover objetos en contenedores protegidos, incluso si la vista ya estaba abierta. Cerrar una vista no cambia el mundo y `InventoryCloseEvent` no es cancelable; el plugin deja cerrar normalmente.
+```text
+/calo region preview
+/calo region clear
+```
 
-## Autoridades y límites
+La previsualización muestra las aristas y esquinas de la selección únicamente al administrador.
 
-CaloIslands no crea claims, clanes, roles ni flags. Lands es autoridad de territorios de jugadores y WorldGuard de regiones fijas de staff. Se compila contra WorldEdit 7.3.19, WorldGuard 7.0.15 y LandsAPI 7.25.4 con dependencias `provided`; las versiones instaladas en el servidor siguen sin verificarse. Los adaptadores opcionales consultan permisos de construcción, contenedores, interacción y PvP cuando corresponde, sin modificar datos externos. Si una API presente es incompatible, las acciones protegidas fallan cerradas; si falta el plugin, sigue la protección local. Ningún listener revierte cancelaciones ajenas. La compatibilidad y precedencia reales se deben aceptar en servidor con las versiones instaladas.
+## Protección
 
-`protection.inactive` y `protection.active` de `config.yml` son listas validadas de acciones. La política versión 3 deniega por defecto las acciones protegidas tanto en regiones activas como inactivas. Las configuraciones V2 existentes con versión 1 o 2 conservan sus restricciones y añaden automáticamente `REDSTONE` y `DISPENSE` para que la actualización no las deje abiertas. Para permitir expresamente alguna de esas acciones, el administrador debe revisar las listas y establecer `policy-version: 3`. `protection.deny-active-entry` permite bloquear nuevas entradas por movimiento, teletransporte o portal a regiones activas; viene desactivado. `caloislands.protection.bypass` (op por defecto) omite solo la protección local de acciones del jugador; `caloislands.admin` por sí solo da acceso a comandos y herramienta, sin bypass. Ninguno de estos permisos revierte cancelaciones de Lands o WorldGuard. El bloqueo de entrada a regiones inactivas permanece obligatorio. Los eventos usan la instantánea de regiones cargada desde MariaDB, sin SQL por evento; si la ubicación no tiene mundo o aparecen regiones solapadas, se deniega la acción.
+Las regiones pueden proteger:
 
-No hay misiones, encuentros, mobs, recompensas, saldos ni escritura en GoldenRPG. BetonQuest y GoldenRPG se integrarán después de verificar sus versiones y contratos y de tener objetivos y recompensas aprobados. No se añadió proxy ni coordinación multiserver: es la última fase.
+* bloques;
+* contenedores;
+* cubos;
+* fuego y líquidos;
+* pistones;
+* explosiones;
+* redstone;
+* dispensadores;
+* entidades colocables;
+* marcos y soportes;
+* interacciones dentro de la región.
 
-El viejo archivo `data.db`, si existe en alguna instalación, contiene datos del producto retirado. V2 no lo lee, migra ni elimina. Guardar respaldo y decidir su retención fuera del plugin antes de cualquier limpieza operacional.
+El bypass requiere:
 
-## Configuración de base
+```text
+caloislands.protection.bypass
+```
 
-Crear manualmente un esquema `caloislands` separado del esquema GoldenRPG y una cuenta limitada a ese esquema. Configurar `database.host`, `port`, `name`, `username` y `password` en el `config.yml` del servidor; los valores `CHANGE_ME` bloquean el arranque. La configuración exige `schema-version: 2`, un nombre de esquema simple y parámetros de pool validados. No hay respaldo automático a otro proveedor. El plugin cierra HikariCP al apagarse.
+Las comprobaciones utilizan la caché de regiones y no ejecutan SQL durante los eventos. CaloIslands respeta las cancelaciones realizadas por otros plugins.
 
-Una instalación anterior puede conservar `config.yml` o `messages.yml` del producto retirado. El plugin exige el esquema de configuración V2; `wand.material` usa `WOODEN_AXE` si falta y los mensajes nuevos ausentes se leen del JAR sin sobrescribir las personalizaciones existentes. Revisar y reemplazar configuraciones incompatibles tras guardar una copia externa. No se importan saldos ni contenido anterior.
+## Comandos
+
+### Regiones
+
+```text
+/calo region wand
+/calo region selection
+/calo region clear
+/calo region preview
+/calo region mode fullheight
+/calo region mode exact
+/calo region create <id>
+/calo region list
+/calo region info <id>
+/calo region resize <id>
+/calo region activate <id>
+/calo region deactivate <id>
+/calo region delete <id>
+```
+
+### Ciudades
+
+```text
+/calo city create <id> <region>
+/calo city list
+/calo city info <id>
+/calo city move <id>
+/calo city delete <id>
+```
+
+```text
+/calo here
+```
+
+Una ciudad es un punto administrativo dentro de una región existente. No crea una región adicional.
+
+Ejemplo:
+
+```text
+/calo region create lumora
+/calo region activate lumora
+/calo city create lumora_city lumora
+/calo city info lumora_city
+```
+
+## Integraciones
+
+* **WorldGuard:** regiones fijas administradas por el staff.
+* **Lands:** claims, territorios, clanes, miembros y roles.
+* **BetonQuest:** misiones, diálogos y progreso narrativo.
+* **GoldenRPG:** estadísticas, progresión y recompensas RPG.
+* **MythicMobs:** mobs y contenido de Vaelkor.
+
+Las integraciones con WorldGuard y Lands están preparadas, pero requieren validación con las versiones reales instaladas en el servidor.
+
+## Contenido retirado
+
+La versión V2 no incluye los sistemas antiguos de Goblins, Slime, Cerberus, Cofre del Oro, combate antiguo, recompensas antiguas, schedulers antiguos ni SQLite.
 
 ## Pruebas
 
-La base V2 single-server de regiones, ciudades, selección y protección está implementada y estable en pruebas locales. La aceptación del último JAR en Paper/UniverseSpigot, la migración v2 contra MariaDB externa y la convivencia real con WorldGuard/Lands siguen pendientes: no hay un servidor de prueba accesible desde esta copia de trabajo. No se atribuye una prueba de servidor al JAR local.
+Ejecutar:
 
-En un servidor de prueba Paper/UniverseSpigot 1.21.8 con Java 21, MariaDB de prueba y WorldEdit habilitado: confirmar `/plugins`, `/version WorldEdit`, `/version WorldGuard` y la versión de Lands; ejecutar `//sel cuboid`, `//wand`, marcar ambas esquinas, `/calo region mode fullheight`, `/calo region selection`, `/calo region create <id>` y `/calo region info <id>`. Desactivar, volver a seleccionar con WorldEdit y ejecutar `/calo region resize <id>`; comprobar que la selección desaparece solo tras guardar. Repetir con `exact` y sin selección. Reiniciar y repetir consulta, protección y ciudad. Para el respaldo, desactivar WorldEdit en una copia de prueba y repetir con `/calo region wand`, incluidos contorno, actionbar y `clear`. Con jugador sin OP ni permisos, probar todas las familias de eventos en región activa e inactiva, fronteras y fuera; luego repetir con bypass explícito y comprobar que Lands y WorldGuard aún deniegan donde corresponda. Ninguna de estas pruebas de servidor se ha ejecutado desde este entorno.
+```bash
+mvn -q clean verify
+```
 
-Prueba manual específica de esta corrección: en una región activa e inactiva, usar dos jugadores sin OP, uno con `caloislands.protection.bypass` y otro sin ese permiso; repetir en supervivencia y creativo con bloque simple, puerta (colocación múltiple), marco, soporte de armadura y cubos de agua/lava. El jugador con bypass debe poder romper y colocar cuando ningún otro plugin deniegue; el otro no debe poder hacerlo. Repetir en una zona con denegación explícita de WorldGuard o Lands y confirmar que el bypass de CaloIslands no la revierte. Situarse dentro de una región y ejecutar `/calo city create <id> <region>`; comprobar `/calo city list` e `info`, mover el administrador dentro de la misma región con `/calo city move <id>`, reiniciar y verificar mundo, coordenadas, estado y versión. Probar creación fuera de límites y en otro mundo; deben fallar sin crear filas. Antes de instalar la migración v2 en un servidor con datos, respaldar su esquema CaloIslands y ejecutarla primero en una copia de prueba.
+Última verificación local registrada:
 
-`mvn clean verify` ejecuta pruebas locales de configuración, mensajes, protección, selección por UUID, normalización, mundos distintos, herramienta sin cambios de bloques, comandos, geometría de 12 aristas, presupuesto de partículas, render dirigido al jugador, toggle, solapamiento y ciclo de vida con un repositorio de prueba en memoria. `RegionStoreMariaDbTest` usa Testcontainers MariaDB 11.4 para migración, registro desde selección, consulta, edición, activación, recuperación, ciudades, borrado y registros concurrentes. Ejecutarlo con `mvn -q -Dtest=RegionStoreMariaDbTest test` en una máquina con Docker. Si Docker no está disponible, JUnit omite esas pruebas; la persistencia externa queda pendiente de validar.
+* 50 pruebas;
+* 0 fallos;
+* 0 errores;
+* 3 pruebas omitidas por falta de Docker/Testcontainers.
 
-Última ejecución local: `JAVA_HOME=C:\Program Files\Java\jdk-21`, `mvn -q clean verify` y `git diff --check`: 50 pruebas registradas, 0 fallos, 0 errores y 3 omitidas (Testcontainers sin Docker). Se probó con mocks la conversión de selección WorldEdit, la consulta de construcción WorldGuard, los estados ausente/desactivado/incompatible de plugins opcionales, el bypass de colocación en supervivencia/creativo y la protección de la caché recuperada sin consultas de almacenamiento por evento. Las pruebas MariaDB reproducibles cubren también migración V1→V2 y recuperación de mundo/coordenadas de ciudades, pero no se ejecutaron sin Docker. LandsAPI requiere el registro de Paper activo para inicializar sus flags; su consulta real queda para la prueba de servidor. Ninguna base de producción fue consultada ni modificada.
+La aceptación final requiere probar MariaDB, Paper/UniverseSpigot, protección con jugadores sin OP y las integraciones reales de WorldGuard y Lands.
 
-La aceptación manual en servidor debe cubrir también puertas, botones, palancas, camas, contenedores ya abiertos, hoppers, cubos, fuego, líquidos, explosiones, pistones, redstone, marcos, soportes, daño y manipulación de entidades. Repetir dentro, fuera y en la frontera exacta; con región activa e inactiva; con jugador sin OP ni permisos y con bypass explícito. Descargar y recargar el mundo y reiniciar el servidor para verificar estados y ciudades. Las pruebas de servidor, MariaDB externa y compatibilidad de Lands no se ejecutaron en este entorno.
+## Próximas fases
+
+1. Validación final en servidor.
+2. Integración con WorldGuard y Lands.
+3. Eventos para BetonQuest.
+4. Recompensas idempotentes para GoldenRPG.
+5. Actividades, encuentros, bosses y dungeons de Vaelkor.
+6. Arquitectura multiserver.
