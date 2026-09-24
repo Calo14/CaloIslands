@@ -1,16 +1,17 @@
 name: CaloIslands
-version: 0.2.0-SNAPSHOT
+version: 2.0.0-SNAPSHOT
 main: me.calo.islands.CaloIslandsPlugin
 api-version: '1.21'
-author: calo
-description: Sistema de islas, aldeas, bosses y eventos PvE de GoldenLyons.
+description: Local Vaelkor region and city registry
+softdepend: [WorldEdit, WorldGuard, Lands]
 commands:
   caloislands:
-    description: Comando principal de CaloIslands.
-    usage: /caloislands
-    aliases: [ci]
+    aliases: [calo]
+    usage: /calo help
     permission: caloislands.admin
 permissions:
   caloislands.admin:
     default: op
-softdepend: [MythicMobs]
+  caloislands.protection.bypass:
+    description: Bypass CaloIslands player action protection; does not bypass Lands or WorldGuard.
+    default: op

@@ -1,235 +1,129 @@
 package me.calo.islands;
 
-import me.calo.islands.command.CaloIslandsCommand;
-import me.calo.islands.combat.BossDamageListener;
-import me.calo.islands.combat.BossDeathListener;
-import me.calo.islands.combat.BossParticipationService;
-import me.calo.islands.core.MessageService;
-import me.calo.islands.core.event.EventManager;
-import me.calo.islands.data.DatabaseManager;
-import me.calo.islands.events.cerberus.CerberusEvent;
-import me.calo.islands.events.goldenchest.GoldenChestEvent;
-import me.calo.islands.events.slime.SlimeEvent;
-import me.calo.islands.goblin.GoblinDropListener;
-import me.calo.islands.goblin.GoblinItemService;
-import me.calo.islands.goblin.GoblinVillageService;
-import me.calo.islands.integration.mythicmobs.MythicMobsHook;
-import me.calo.islands.rewards.RewardItemService;
-import org.bukkit.command.PluginCommand;
+import me.calo.islands.command.RegionCommand;
+import me.calo.islands.core.SelectionSource;
+import me.calo.islands.integration.WorldEditSelectionSource;
+import me.calo.islands.integration.ExternalProtection;
+import me.calo.islands.integration.WorldGuardProtection;
+import me.calo.islands.integration.LandsProtection;
+import me.calo.islands.integration.OptionalIntegration;
+import me.calo.islands.data.DatabaseConfig;
+import me.calo.islands.data.DatabasePool;
+import me.calo.islands.data.RegionStore;
+import me.calo.islands.data.SchemaMigrator;
+import me.calo.islands.domain.RegionService;
+import me.calo.islands.domain.RegionSelectionService;
+import me.calo.islands.listener.RegionAccessListener;
+import me.calo.islands.listener.RegionSelectionListener;
+import me.calo.islands.listener.SelectionSessionListener;
+import me.calo.islands.core.Messages;
+import me.calo.islands.core.SelectionTool;
+import me.calo.islands.core.PreviewSettings;
+import me.calo.islands.core.RegionPreviewService;
+import me.calo.islands.core.ProtectionSettings;
+import me.calo.islands.domain.RegionProtectionPolicy;
+import me.calo.islands.listener.RegionProtectionListener;
+import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
-
-import java.sql.SQLException;
+import org.bukkit.scheduler.BukkitTask;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Supplier;
 
 public final class CaloIslandsPlugin extends JavaPlugin {
-
-    private MessageService messages;
-    private DatabaseManager database;
-
-    private GoblinItemService goblinItems;
-    private GoblinVillageService goblinVillage;
-
-    private EventManager eventManager;
-    private MythicMobsHook mythicMobs;
-    private BossParticipationService bossParticipation;
-    private RewardItemService rewardItems;
-
-    private SlimeEvent slimeEvent;
-    private CerberusEvent cerberusEvent;
-    private GoldenChestEvent goldenChestEvent;
+    private DatabasePool pool;
+    private BukkitTask previewTask;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
-        saveResource("messages.yml", false);
-
-        this.messages = new MessageService(this);
-
-        if (!initializeDatabase()) {
-            getServer().getPluginManager().disablePlugin(this);
+        if (!new File(getDataFolder(), "messages.yml").exists()) saveResource("messages.yml", false);
+        if (getConfig().getInt("schema-version") != 2) {
+            getLogger().severe("Unsupported config schema version; CaloIslands disabled");
+            Bukkit.getPluginManager().disablePlugin(this);
             return;
         }
-
-        /*
-         * Existing Goblin system
-         */
-        this.goblinItems = new GoblinItemService(this);
-        this.goblinVillage = new GoblinVillageService(
-                this,
-                messages,
-                goblinItems
-        );
-
-        getServer().getPluginManager().registerEvents(
-                new GoblinDropListener(this, goblinVillage),
-                this
-        );
-
-        /*
-         * Shared event infrastructure
-         */
-        this.mythicMobs = new MythicMobsHook(this);
-        this.bossParticipation = new BossParticipationService(this);
-        this.rewardItems = new RewardItemService(this);
-
-        this.eventManager = new EventManager(this);
-
-        /*
-         * Main events
-         */
-        this.slimeEvent = new SlimeEvent(
-                this,
-                mythicMobs,
-                bossParticipation
-        );
-
-        this.cerberusEvent = new CerberusEvent(
-                this,
-                mythicMobs,
-                bossParticipation
-        );
-
-        this.goldenChestEvent = new GoldenChestEvent(this);
-
-        eventManager.register(slimeEvent);
-        eventManager.register(cerberusEvent);
-        eventManager.register(goldenChestEvent);
-
-        /*
-         * Combat listeners
-         */
-        getServer().getPluginManager().registerEvents(
-                new BossDamageListener(bossParticipation),
-                this
-        );
-
-        getServer().getPluginManager().registerEvents(
-                new BossDeathListener(
-                        bossParticipation,
-                        slimeEvent,
-                        cerberusEvent,
-                        rewardItems
-                ),
-                this
-        );
-
-        /*
-         * Command
-         */
-        PluginCommand command = getCommand("caloislands");
-
-        if (command != null) {
-            CaloIslandsCommand executor = new CaloIslandsCommand(
-                    this,
-                    messages,
-                    goblinVillage,
-                    goblinItems,
-                    eventManager,
-                    slimeEvent,
-                    cerberusEvent,
-                    goldenChestEvent
-            );
-
-            command.setExecutor(executor);
-            command.setTabCompleter(executor);
-        }
-
-        /*
-         * Schedulers
-         */
-        goblinVillage.startScheduler();
-        eventManager.startScheduler();
-
-        getLogger().info(
-                "SQLite conectado: "
-                        + database.getDatabaseFile().getName()
-        );
-
-        getLogger().info(
-                "MythicMobs: "
-                        + (mythicMobs.isAvailable()
-                        ? "CONECTADO"
-                        : "NO DISPONIBLE")
-        );
-
-        getLogger().info(
-                "Eventos registrados: "
-                        + eventManager.events().size()
-        );
-
-        getLogger().info(
-                "CaloIslands habilitado correctamente."
-        );
-    }
-
-    private boolean initializeDatabase() {
         try {
-            this.database = new DatabaseManager(this);
-            this.database.initialize();
-            return true;
-
-        } catch (SQLException | RuntimeException exception) {
-            getLogger().severe(
-                    "No se pudo inicializar la base de datos de CaloIslands."
-            );
-
-            exception.printStackTrace();
-            return false;
+            DatabaseConfig database = DatabaseConfig.read(getConfig().getConfigurationSection("database"));
+            ProtectionSettings protection = ProtectionSettings.read(getConfig().getConfigurationSection("protection"));
+            PreviewSettings previewSettings = PreviewSettings.read(getConfig().getConfigurationSection("preview"));
+            Messages messages = new Messages(new File(getDataFolder(), "messages.yml"));
+            SelectionTool tool = new SelectionTool(this, getConfig().getString("wand.material", "WOODEN_AXE"), messages);
+            pool = new DatabasePool(database);
+            new SchemaMigrator(pool.dataSource()).migrate();
+            RegionStore store = new RegionStore(pool.dataSource());
+            RegionService regions = new RegionService(store, name -> {
+                var world = Bukkit.getWorld(name);
+                return world == null ? java.util.Optional.empty() : java.util.Optional.of(
+                        new RegionService.WorldHeight(world.getMinHeight(), world.getMaxHeight()));
+            });
+            RegionSelectionService selections = new RegionSelectionService();
+            RegionPreviewService preview = new RegionPreviewService(selections, previewSettings, messages);
+            var worldEdit = OptionalIntegration.load(Bukkit.getPluginManager(),
+                    "WorldEdit", WorldEditSelectionSource::new);
+            logIntegration("WorldEdit", worldEdit);
+            SelectionSource externalSelection = worldEdit.adapter();
+            RegionCommand command = new RegionCommand(regions, selections, tool, messages, externalSelection);
+            getCommand("caloislands").setExecutor(command);
+            getCommand("caloislands").setTabCompleter(command);
+            List<ExternalProtection> authorities = new ArrayList<>();
+            loadProtection("WorldGuard", WorldGuardProtection::new, authorities);
+            loadProtection("Lands", () -> new LandsProtection(this), authorities);
+            Bukkit.getPluginManager().registerEvents(new RegionAccessListener(regions, messages, protection), this);
+            Bukkit.getPluginManager().registerEvents(new RegionProtectionListener(
+                    new RegionProtectionPolicy(regions, protection, authorities)), this);
+            Bukkit.getPluginManager().registerEvents(new SelectionSessionListener(selections, externalSelection), this);
+            if (externalSelection == null)
+                Bukkit.getPluginManager().registerEvents(new RegionSelectionListener(selections, tool, messages), this);
+            if (externalSelection == null)
+                previewTask = Bukkit.getScheduler().runTaskTimer(this,
+                        () -> preview.renderFrame(Bukkit.getOnlinePlayers()), 1L, previewSettings.intervalTicks());
+            long pending = regions.regions().stream().filter(r -> r.active() && !regions.operational(r)).count();
+            getLogger().info("MariaDB region schema v" + SchemaMigrator.VERSION + " ready; " + regions.regions().size() + " regions, "
+                    + regions.cities().size() + " cities, " + pending + " awaiting a loaded world");
+        } catch (IllegalArgumentException e) {
+            getLogger().severe("Invalid CaloIslands configuration: " + e.getMessage());
+            Bukkit.getPluginManager().disablePlugin(this);
+        } catch (Exception e) {
+            getLogger().severe("Cannot initialize CaloIslands region store: " + e.getClass().getSimpleName());
+            Bukkit.getPluginManager().disablePlugin(this);
         }
     }
 
     @Override
     public void onDisable() {
-        if (eventManager != null) {
-            eventManager.shutdown();
+        if (previewTask != null) {
+            previewTask.cancel();
+            previewTask = null;
         }
-
-        if (bossParticipation != null) {
-            bossParticipation.clear();
-        }
-
-        if (goblinVillage != null) {
-            goblinVillage.shutdown();
+        if (pool != null) {
+            pool.close();
+            pool = null;
         }
     }
 
-    public void reloadAll() {
-        reloadConfig();
-        messages.reload();
+    private void loadProtection(String pluginName, Supplier<ExternalProtection> factory,
+                                List<ExternalProtection> adapters) {
+        var result = OptionalIntegration.load(Bukkit.getPluginManager(), pluginName, factory);
+        logIntegration(pluginName, result);
+        if (result.status() == OptionalIntegration.Status.LOADED) adapters.add(result.adapter());
+        if (result.status() == OptionalIntegration.Status.INCOMPATIBLE)
+            adapters.add((player, action, location) -> true);
+    }
 
-        if (goblinVillage != null) {
-            goblinVillage.reload();
+    private void logIntegration(String name, OptionalIntegration.Result<?> result) {
+        boolean selector = name.equals("WorldEdit");
+        switch (result.status()) {
+            case ABSENT -> getLogger().warning(name + " absent; "
+                    + (selector ? "built-in wand selected." : "local region protection remains active."));
+            case DISABLED -> getLogger().warning(name + " installed but disabled (" + result.version() + "); "
+                    + (selector ? "built-in wand selected." : "local region protection remains active."));
+            case LOADED -> getLogger().info(name + " API adapter loaded (" + result.version() + "); "
+                    + (selector ? "WorldEdit selects regions." : "local region protection remains active."));
+            case INCOMPATIBLE -> getLogger().warning(name + " API incompatible (" + result.version()
+                    + ", " + result.failure() + "); " + (selector ? "built-in wand selected."
+                    : "protected CaloIslands actions fail closed."));
         }
-    }
-
-    public DatabaseManager database() {
-        return database;
-    }
-
-    public EventManager events() {
-        return eventManager;
-    }
-
-    public MythicMobsHook mythicMobs() {
-        return mythicMobs;
-    }
-
-    public BossParticipationService bossParticipation() {
-        return bossParticipation;
-    }
-
-    public RewardItemService rewardItems() {
-        return rewardItems;
-    }
-
-    public SlimeEvent slimeEvent() {
-        return slimeEvent;
-    }
-
-    public CerberusEvent cerberusEvent() {
-        return cerberusEvent;
-    }
-
-    public GoldenChestEvent goldenChestEvent() {
-        return goldenChestEvent;
     }
 }

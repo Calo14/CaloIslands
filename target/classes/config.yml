@@ -1,93 +1,26 @@
-general:
-  prefix: "&6&lCaloIslands &8» &f"
-
-scheduler:
-  tick-seconds: 1
-
-goblin:
-  enabled: true
-  auto-start:
-    enabled: false
-    interval-minutes: 60
-  duration-minutes: 40
-  region:
-    world: world
-    x: 0.0
-    y: 80.0
-    z: 0.0
-    radius: 80.0
-  caps:
-    piel: 20
-    colmillo: 3
-  announcements:
-    start:
-      - "&2&lALDEA GOBLIN"
-      - "&fLa aldea ha aparecido."
-      - "&7Tienes &a40 minutos &7para aprovechar el evento."
-    ending:
-      - "&eLa Aldea Goblin desaparecerá en &f1 minuto&e."
-    end:
-      - "&2&lALDEA GOBLIN"
-      - "&fLa aldea ha desaparecido."
-  drops:
-    normal:
-      piel: { chance: 35.0, min: 1, max: 1 }
-      colmillo: { chance: 5.0, min: 1, max: 1 }
-    special:
-      piel: { chance: 50.0, min: 1, max: 1 }
-      colmillo: { chance: 10.0, min: 1, max: 1 }
-    elite:
-      piel: { chance: 75.0, min: 1, max: 2 }
-      colmillo: { chance: 20.0, min: 1, max: 1 }
-    captain:
-      piel: { chance: 100.0, min: 3, max: 5 }
-      colmillo: { chance: 100.0, min: 1, max: 2 }
-    king:
-      piel: { chance: 100.0, min: 6, max: 8 }
-      colmillo: { chance: 100.0, min: 3, max: 4 }
-
-events:
-
-  slime:
-    enabled: true
-    mythic-id: "SlimeBoss"
-    interval-minutes: 120
-    duration-minutes: 90
-
-    location:
-      world: "world"
-      x: 0.5
-      y: 100.0
-      z: 0.5
-
-  cerberus:
-    enabled: true
-    mythic-id: "CerberusBoss"
-    interval-minutes: 120
-    offset-minutes: 60
-    duration-minutes: 90
-
-    location:
-      world: "world"
-      x: 20.5
-      y: 100.0
-      z: 20.5
-
-  golden-chest:
-    enabled: true
-    interval-minutes: 360
-    duration-minutes: 15
-
-    tiers:
-      participant:
-        minimum-points: 50
-        money: 50000
-      warrior:
-        minimum-points: 150
-        money: 125000
-      champion:
-        minimum-points: 300
-        money: 250000
-
-    winner:
-      money: 5000000
+schema-version: 2
+# Create this separate schema and its restricted account before enabling the plugin.
+# Never reuse GoldenRPG's schema or credentials. Set credentials only on the server.
+database:
+  host: localhost
+  port: 3306
+  name: caloislands
+  username: CHANGE_ME
+  password: CHANGE_ME
+  pool:
+    maximum-size: 4
+    connection-timeout-ms: 10000
+wand:
+  material: WOODEN_AXE
+preview:
+  edge-particle: END_ROD
+  corner-particle: FLAME
+  interval-ticks: 10
+  max-particles-per-frame: 192
+# Actions denied inside CaloIslands gameplay regions. Existing unversioned V2
+# protection sections are treated as fully protected until an explicit policy is set.
+protection:
+  policy-version: 3
+  deny-active-entry: false
+  inactive: [BLOCK_BREAK, BLOCK_PLACE, BLOCK_INTERACT, CONTAINER, ENTITY_INTERACT, BUCKET, FLUID_FLOW, FIRE, EXPLOSION, PISTON, PVP_DAMAGE, PVE_DAMAGE, ENTITY_SPAWN, ENTITY_BLOCK_CHANGE, REDSTONE, DISPENSE]
+  active: [BLOCK_BREAK, BLOCK_PLACE, BLOCK_INTERACT, CONTAINER, ENTITY_INTERACT, BUCKET, FLUID_FLOW, FIRE, EXPLOSION, PISTON, PVP_DAMAGE, PVE_DAMAGE, ENTITY_SPAWN, ENTITY_BLOCK_CHANGE, REDSTONE, DISPENSE]
