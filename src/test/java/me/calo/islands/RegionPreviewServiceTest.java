@@ -18,6 +18,24 @@ import static org.mockito.Mockito.*;
 
 final class RegionPreviewServiceTest {
     @Test
+    void worldEditAndIndependentRegionPreviewStayPersonalAndDoNotMutateSelection() {
+        RegionSelectionService selections = new RegionSelectionService();
+        me.calo.islands.core.SelectionSource source = mock(me.calo.islands.core.SelectionSource.class);
+        RegionPreviewService preview = new RegionPreviewService(selections,
+                new PreviewSettings(Particle.END_ROD, Particle.FLAME, 10, 192),
+                new Messages(new File("src/main/resources/messages.yml")), source);
+        Player admin = mock(Player.class), other = mock(Player.class); World world = mock(World.class);
+        UUID id = UUID.randomUUID(); when(admin.getUniqueId()).thenReturn(id); when(admin.hasPermission("caloislands.admin")).thenReturn(true);
+        when(admin.getWorld()).thenReturn(world); when(world.getName()).thenReturn("test_world"); when(world.getMinHeight()).thenReturn(-64); when(world.getMaxHeight()).thenReturn(320);
+        var selection = new RegionSelectionService.Selection(new RegionSelectionService.Position("test_world", 0, 60, 0), new RegionSelectionService.Position("test_world", 10, 80, 10));
+        when(source.selection(admin)).thenReturn(selection); preview.renderFrame(List.of(admin, other)); verify(admin).sendActionBar(contains("fullheight"));
+        clearInvocations(admin); preview.region(id, new me.calo.islands.domain.Region("preview_region", "test_world", new me.calo.islands.domain.Bounds(2, 70, 2, 5, 75, 5), false, 1));
+        preview.renderFrame(List.of(admin, other)); verify(admin).sendActionBar(contains("4x6x4"));
+        verify(source, times(1)).selection(admin); verify(source, never()).clear(any());
+        org.junit.jupiter.api.Assertions.assertTrue(selections.get(id).isEmpty()); verify(other, never()).spawnParticle(any(Particle.class), anyDouble(), anyDouble(), anyDouble(), anyInt());
+        preview.clear(id); clearInvocations(admin); preview.renderFrame(List.of(admin)); verify(admin).sendActionBar(contains("fullheight"));
+    }
+    @Test
     void rendersOnlyForSelectingAdminWithoutWorldBlockOrDatabaseAccess() {
         RegionSelectionService selections = new RegionSelectionService();
         Messages messages = new Messages(new File("src/main/resources/messages.yml"));

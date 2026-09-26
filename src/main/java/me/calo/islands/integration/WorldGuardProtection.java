@@ -19,6 +19,15 @@ public final class WorldGuardProtection implements ExternalProtection {
     }
 
     @Override
+    public boolean deniesEntry(Player player, Location location) {
+        var local = WorldGuardPlugin.inst().wrapPlayer(player);
+        if (WorldGuard.getInstance().getPlatform().getSessionManager().hasBypass(
+                local, BukkitAdapter.adapt(location.getWorld()))) return false;
+        return !WorldGuard.getInstance().getPlatform().getRegionContainer().createQuery()
+                .testState(BukkitAdapter.adapt(location), local, Flags.ENTRY);
+    }
+
+    @Override
     public boolean denies(Player player, Action action, Location location) {
         if (player == null) return false; // Native WorldGuard handles non-player events.
         var local = WorldGuardPlugin.inst().wrapPlayer(player);

@@ -19,6 +19,14 @@ public final class RegionStore implements RegionRepository {
 
     public RegionStore(DataSource source) { this.source = source; }
 
+    public int schemaVersion() throws SQLException {
+        try (Connection connection = source.getConnection(); PreparedStatement query = connection.prepareStatement(
+                "SELECT version FROM calo_schema_version WHERE id=1")) {
+            query.setQueryTimeout(5);
+            try (ResultSet rows = query.executeQuery()) { return rows.next() ? rows.getInt(1) : 0; }
+        }
+    }
+
     public List<Region> regions() throws SQLException {
         try (Connection connection = source.getConnection(); PreparedStatement query = connection.prepareStatement(
                 "SELECT * FROM calo_regions ORDER BY id"); ResultSet rows = query.executeQuery()) {

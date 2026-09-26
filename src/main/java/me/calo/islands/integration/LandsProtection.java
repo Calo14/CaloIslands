@@ -19,6 +19,12 @@ public final class LandsProtection implements ExternalProtection {
     }
 
     @Override
+    public boolean deniesEntry(Player player, Location location) {
+        var area = lands.getArea(location);
+        return area != null && !area.hasFlag(player, Flags.LAND_ENTER, false);
+    }
+
+    @Override
     public boolean denies(Player player, Action action, Location location) {
         if (player == null) return false; // Native Lands handles non-player events.
         var area = lands.getArea(location);

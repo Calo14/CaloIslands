@@ -59,25 +59,35 @@ public final class CaloIslandsPlugin extends JavaPlugin {
                         new RegionService.WorldHeight(world.getMinHeight(), world.getMaxHeight()));
             });
             RegionSelectionService selections = new RegionSelectionService();
-            RegionPreviewService preview = new RegionPreviewService(selections, previewSettings, messages);
             var worldEdit = OptionalIntegration.load(Bukkit.getPluginManager(),
                     "WorldEdit", WorldEditSelectionSource::new);
             logIntegration("WorldEdit", worldEdit);
             SelectionSource externalSelection = worldEdit.adapter();
+            RegionPreviewService preview = new RegionPreviewService(selections, previewSettings, messages, externalSelection);
             RegionCommand command = new RegionCommand(regions, selections, tool, messages, externalSelection);
             getCommand("caloislands").setExecutor(command);
             getCommand("caloislands").setTabCompleter(command);
             List<ExternalProtection> authorities = new ArrayList<>();
             loadProtection("WorldGuard", WorldGuardProtection::new, authorities);
             loadProtection("Lands", () -> new LandsProtection(this), authorities);
+            var ui = new me.calo.islands.gui.AdminUi(this, "caloislands.admin");
+            List<ExternalProtection> teleportAuthorities = new ArrayList<>(authorities);
+            for (String name : List.of("Lands", "WorldGuard")) {
+                if (getServer().getPluginManager().getPlugin(name) != null && !getServer().getPluginManager().isPluginEnabled(name))
+                    teleportAuthorities.add((player, action, location) -> true);
+            }
+            var menu = new me.calo.islands.gui.CaloAdminMenu(this, ui, regions, selections, externalSelection,
+                    preview, command, new me.calo.islands.core.AdminTeleportService(regions, teleportAuthorities), store);
+            command.setMenu(menu::open);
+            Bukkit.getPluginManager().registerEvents(ui, this);
+            Bukkit.getPluginManager().registerEvents(menu, this);
             Bukkit.getPluginManager().registerEvents(new RegionAccessListener(regions, messages, protection), this);
             Bukkit.getPluginManager().registerEvents(new RegionProtectionListener(
                     new RegionProtectionPolicy(regions, protection, authorities)), this);
             Bukkit.getPluginManager().registerEvents(new SelectionSessionListener(selections, externalSelection), this);
             if (externalSelection == null)
                 Bukkit.getPluginManager().registerEvents(new RegionSelectionListener(selections, tool, messages), this);
-            if (externalSelection == null)
-                previewTask = Bukkit.getScheduler().runTaskTimer(this,
+            previewTask = Bukkit.getScheduler().runTaskTimer(this,
                         () -> preview.renderFrame(Bukkit.getOnlinePlayers()), 1L, previewSettings.intervalTicks());
             long pending = regions.regions().stream().filter(r -> r.active() && !regions.operational(r)).count();
             getLogger().info("MariaDB region schema v" + SchemaMigrator.VERSION + " ready; " + regions.regions().size() + " regions, "

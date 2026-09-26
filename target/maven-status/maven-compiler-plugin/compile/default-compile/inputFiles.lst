@@ -1,5 +1,6 @@
 C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\CaloIslandsPlugin.java
 C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\command\RegionCommand.java
+C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\core\AdminTeleportService.java
 C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\core\Messages.java
 C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\core\PreviewSettings.java
 C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\core\ProtectionSettings.java
@@ -20,6 +21,9 @@ C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\domain\RegionAccessPolicy
 C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\domain\RegionProtectionPolicy.java
 C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\domain\RegionSelectionService.java
 C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\domain\RegionService.java
+C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\gui\AdminUi.java
+C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\gui\CaloAdminMenu.java
+C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\gui\MenuText.java
 C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\integration\ExternalProtection.java
 C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\integration\LandsProtection.java
 C:\Proyectos\CaloIslands\src\main\java\me\calo\islands\integration\OptionalIntegration.java

@@ -27,6 +27,8 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
     private final SelectionTool tool;
     private final Messages messages;
     private final SelectionSource externalSelection;
+    private java.util.function.Consumer<Player> menu;
+    public void setMenu(java.util.function.Consumer<Player> menu) { this.menu = menu; }
 
     public RegionCommand(RegionService regions, RegionSelectionService selections,
                          SelectionTool tool, Messages messages) {
@@ -51,6 +53,11 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
         try {
             if (args.length == 0 || args[0].equalsIgnoreCase("help")) { help(sender); return true; }
             switch (args[0].toLowerCase()) {
+                case "menu" -> {
+                    require(args, 1);
+                    if (menu == null) throw new IllegalStateException("Menú no disponible.");
+                    menu.accept(player(sender));
+                }
                 case "region" -> region(sender, args);
                 case "city" -> city(sender, args);
                 case "here" -> here(sender);
@@ -283,6 +290,7 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
     }
 
     private void help(CommandSender sender) {
+        sender.sendMessage("§e/calo menu §7— panel central de administración");
         messages.send(sender, "help-region");
         messages.send(sender, "help-region-edit");
         messages.send(sender, externalSelection == null ? "help-selection" : "help-worldedit-selection");
@@ -293,7 +301,7 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!sender.hasPermission("caloislands.admin")) return List.of();
-        if (args.length == 1) return matching(List.of("region", "city", "here", "help"), args[0]);
+        if (args.length == 1) return matching(List.of("region", "city", "here", "help", "menu"), args[0]);
         if (args.length == 2 && args[0].equalsIgnoreCase("region"))
             return matching(List.of("wand", "selection", "mode", "preview", "clear", "list", "info", "create", "resize", "activate", "deactivate", "delete"), args[1]);
         if (args.length == 3 && args[0].equalsIgnoreCase("region") && args[1].equalsIgnoreCase("mode"))
