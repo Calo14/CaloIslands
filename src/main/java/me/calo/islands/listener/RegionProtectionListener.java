@@ -1,6 +1,8 @@
 package me.calo.islands.listener;
 
 import me.calo.islands.core.ProtectionSettings.Action;
+import me.calo.islands.content.ObjectiveActivityService;
+import me.calo.islands.content.ObjectiveSettings;
 import me.calo.islands.domain.RegionProtectionPolicy;
 import org.bukkit.Location;
 import org.bukkit.block.Block;
@@ -49,8 +51,13 @@ import java.util.List;
 /** Cancels only CaloIslands restrictions; never un-cancels WorldGuard or Lands decisions. */
 public final class RegionProtectionListener implements Listener {
     private final RegionProtectionPolicy policy;
+    private final ObjectiveActivityService objectives;
 
-    public RegionProtectionListener(RegionProtectionPolicy policy) { this.policy = policy; }
+    public RegionProtectionListener(RegionProtectionPolicy policy) { this(policy, null); }
+    public RegionProtectionListener(RegionProtectionPolicy policy, ObjectiveActivityService objectives) {
+        this.policy = policy;
+        this.objectives = objectives;
+    }
 
     private boolean deniesPlayer(Player actor, Action action, Location location) {
         return policy.denies(actor, action, location);
@@ -58,7 +65,9 @@ public final class RegionProtectionListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent event) {
-        if (deniesPlayer(event.getPlayer(), Action.BLOCK_BREAK, event.getBlock().getLocation())) event.setCancelled(true);
+        if (deniesPlayer(event.getPlayer(), Action.BLOCK_BREAK, event.getBlock().getLocation())
+                && (objectives == null || !objectives.allowsBlockAction(event.getPlayer(), event.getBlock(),
+                        ObjectiveSettings.Mode.COLLECTION))) event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -86,7 +95,10 @@ public final class RegionProtectionListener implements Listener {
         Block clicked = event.getClickedBlock();
         if (clicked == null) return;
         Action action = clicked.getState() instanceof Container ? Action.CONTAINER : Action.BLOCK_INTERACT;
-        if (deniesPlayer(event.getPlayer(), action, clicked.getLocation())) event.setCancelled(true);
+        if (deniesPlayer(event.getPlayer(), action, clicked.getLocation())
+                && (objectives == null || action != Action.BLOCK_INTERACT
+                    || !objectives.allowsBlockAction(event.getPlayer(), clicked,
+                            ObjectiveSettings.Mode.STRUCTURE))) event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -252,7 +264,10 @@ public final class RegionProtectionListener implements Listener {
         boolean playerAttacker = actor != null;
         Action action = event.getEntity() instanceof Player && playerAttacker
                 ? Action.PVP_DAMAGE : Action.PVE_DAMAGE;
-        if (deniesPlayer(actor, action, victim)) event.setCancelled(true);
+        if (deniesPlayer(actor, action, victim)
+                && (objectives == null || action != Action.PVE_DAMAGE
+                    || !objectives.allowsMobCombat(event.getDamager(), event.getEntity())))
+            event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -264,7 +279,9 @@ public final class RegionProtectionListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onSpawn(CreatureSpawnEvent event) {
-        if (policy.denies(Action.ENTITY_SPAWN, event.getLocation())) event.setCancelled(true);
+        if (policy.denies(Action.ENTITY_SPAWN, event.getLocation())
+                && (objectives == null || !objectives.allowsInternalSpawn(event.getLocation())))
+            event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)

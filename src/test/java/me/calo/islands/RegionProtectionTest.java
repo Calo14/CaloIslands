@@ -7,6 +7,8 @@ import me.calo.islands.domain.Region;
 import me.calo.islands.domain.RegionProtectionPolicy;
 import me.calo.islands.domain.RegionService;
 import me.calo.islands.listener.RegionProtectionListener;
+import me.calo.islands.content.ObjectiveActivityService;
+import me.calo.islands.content.ObjectiveSettings;
 import me.calo.islands.integration.ExternalProtection;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -80,6 +82,33 @@ final class RegionProtectionTest {
         when(adminBreak.getPlayer()).thenReturn(admin);
         new RegionProtectionListener(new RegionProtectionPolicy(regions, settings)).onBreak(adminBreak);
         verify(adminBreak, never()).setCancelled(true);
+    }
+    @Test void confirmedCollectionBypassesOnlyCaloBlockBreakDecision() {
+        var config = YamlConfiguration.loadConfiguration(new File("src/main/resources/config.yml"));
+        ProtectionSettings settings = ProtectionSettings.read(config.getConfigurationSection("protection"));
+        RegionService regions = mock(RegionService.class);
+        World world = mock(World.class);
+        when(world.getName()).thenReturn("test_world");
+        Location inside = new Location(world, 5, 10, 5);
+        when(regions.matchingAt("test_world", 5, 10, 5)).thenReturn(List.of(new Region(
+                "active", "test_world", new Bounds(0, 0, 0, 10, 20, 10), true, 1)));
+        Block block = mock(Block.class);
+        when(block.getLocation()).thenReturn(inside);
+        Player player = mock(Player.class);
+        ObjectiveActivityService objectives = mock(ObjectiveActivityService.class);
+        when(objectives.allowsBlockAction(player, block, ObjectiveSettings.Mode.COLLECTION))
+                .thenReturn(true);
+        BlockBreakEvent event = mock(BlockBreakEvent.class);
+        when(event.getBlock()).thenReturn(block);
+        when(event.getPlayer()).thenReturn(player);
+        new RegionProtectionListener(new RegionProtectionPolicy(regions, settings), objectives)
+                .onBreak(event);
+        verify(event, never()).setCancelled(true);
+        when(objectives.allowsBlockAction(player, block, ObjectiveSettings.Mode.COLLECTION))
+                .thenReturn(false);
+        new RegionProtectionListener(new RegionProtectionPolicy(regions, settings), objectives)
+                .onBreak(event);
+        verify(event).setCancelled(true);
     }
 
     @Test

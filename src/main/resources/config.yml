@@ -1,4 +1,31 @@
 schema-version: 2
+# Optional point defense. Configure all values and the region point before enabling.
+# Sneak + right click with an empty main hand near that point to activate.
+activity:
+  defense:
+    enabled: false
+    # id: defense_event
+    # region-id: configured_region
+    # duration-seconds: <approved duration>
+    # radius-blocks: <approved radius>
+  # Optional cooperative objectives use a saved region point. Each enabled entry
+  # requires name, mode, region-id, radius-blocks, max-participants,
+  # max-contribution-per-player and timeout-seconds. All modes except ESCORT also
+  # require goal. CAPTURE_CONTROL requires capture-at; STRUCTURE/COLLECTION require
+  # block-material; MOB_EVENT requires mob-type; ESCORT requires route and step-blocks.
+  # objectives:
+  #   <id>:
+  #     enabled: true
+  #     name: <display name>
+  #     mode: DEFENSE|CAPTURE_CONTROL|STRUCTURE|ESCORT|COLLECTION|MOB_EVENT
+  #     region-id: <saved region>
+  #     radius-blocks: <radius>
+  #     goal: <goal, except ESCORT>
+  #     max-participants: <limit>
+  #     max-contribution-per-player: <limit>
+  #     timeout-seconds: <limit>
+  # Reward policy is intentionally absent. With no approved rule, completed
+  # participant intents remain WAITING_POLICY and no GoldenRPG reward is requested.
 # Create this separate schema and its restricted account before enabling the plugin.
 # Never reuse GoldenRPG's schema or credentials. Set credentials only on the server.
 database:
@@ -13,10 +40,17 @@ database:
 wand:
   material: WOODEN_AXE
 preview:
-  edge-particle: END_ROD
-  corner-particle: FLAME
+  edge-particle: DUST
+  corner-particle: DUST
   interval-ticks: 10
-  max-particles-per-frame: 192
+  max-particles-per-frame: 960
+  max-point-spacing: 2.0
+  grid-spacing: 16.0
+  colors:
+    selection: '#00FFFF'
+    active: '#00FF00'
+    inactive: '#FFA500'
+    invalid: '#FF0000'
 # Actions denied inside CaloIslands gameplay regions. Existing unversioned V2
 # protection sections are treated as fully protected until an explicit policy is set.
 protection:

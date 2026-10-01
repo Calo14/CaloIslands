@@ -17,6 +17,42 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 final class RegionPreviewServiceTest {
+    @Test void dustColorsDifferentiateSelectionActiveInactiveAndConflict() {
+        var selections=new RegionSelectionService(); var settings=PreviewSettings.read(null);
+        var preview=new RegionPreviewService(selections,settings,new Messages(new File("src/main/resources/messages.yml")));
+        Player p=mock(Player.class); World w=mock(World.class); UUID id=UUID.randomUUID();
+        when(p.getUniqueId()).thenReturn(id); when(p.hasPermission("caloislands.admin")).thenReturn(true);
+        when(p.getWorld()).thenReturn(w); when(w.getName()).thenReturn("test_world"); when(w.getMinHeight()).thenReturn(-64); when(w.getMaxHeight()).thenReturn(320);
+        selections.setFirst(id,"test_world",0,60,0); selections.setSecond(id,"test_world",10,80,10);
+        var bounds=new me.calo.islands.domain.Bounds(0,-64,0,10,319,10);
+        var region=new me.calo.islands.domain.Region("preview_region","test_world",bounds,true,1);
+        for(int frame=0;frame<4;frame++) {
+            if(frame==1) preview.region(id,region);
+            if(frame==2) preview.region(id,new me.calo.islands.domain.Region(region.id(),region.world(),bounds,false,2));
+            if(frame==3) { preview.startSelection(id); preview.setRegions(()->List.of(region)); }
+            clearInvocations(p); preview.renderFrame(List.of(p));
+            var dust=org.mockito.ArgumentCaptor.forClass(Particle.DustOptions.class);
+            verify(p,atLeastOnce()).spawnParticle(eq(Particle.DUST),anyDouble(),anyDouble(),anyDouble(),eq(1),eq(0.0),eq(0.0),eq(0.0),eq(0.0),dust.capture());
+            var expected=frame==0 ? settings.selectionColor() : frame==1 ? settings.activeColor() : frame==2 ? settings.inactiveColor() : settings.invalidColor();
+            org.junit.jupiter.api.Assertions.assertTrue(dust.getAllValues().stream().allMatch(d->d.getColor().equals(expected)));
+            org.junit.jupiter.api.Assertions.assertTrue(dust.getAllValues().size()<=settings.maxParticlesPerFrame());
+        }
+    }
+    @Test void stoppingRepeatingInvalidatingAndClearingAllKeepsOnePersonalSession() {
+        var selections=new RegionSelectionService();
+        var preview=new RegionPreviewService(selections,PreviewSettings.read(null),new Messages(new File("src/main/resources/messages.yml")));
+        Player p=mock(Player.class); World w=mock(World.class); UUID id=UUID.randomUUID();
+        when(p.getUniqueId()).thenReturn(id); when(p.hasPermission("caloislands.admin")).thenReturn(true);
+        when(p.getWorld()).thenReturn(w); when(w.getName()).thenReturn("test_world"); when(w.getMinHeight()).thenReturn(-64);when(w.getMaxHeight()).thenReturn(320);
+        var region=new me.calo.islands.domain.Region("preview_region","test_world",new me.calo.islands.domain.Bounds(0,-64,0,10,319,10),true,1);
+        for(int i=0;i<5;i++) { preview.region(id,region); preview.renderFrame(List.of(p)); preview.stop(id); if(i<4) selections.togglePreview(id); }
+        clearInvocations(p); preview.renderFrame(List.of(p)); verify(p,never()).sendActionBar(anyString());
+        selections.togglePreview(id); preview.region(id,region); preview.invalidate(region.id());
+        preview.renderFrame(List.of(p)); verify(p,never()).sendActionBar(anyString());
+        selections.togglePreview(id); preview.region(id,region); preview.renderFrame(List.of(p)); preview.clearAll();
+        clearInvocations(p); preview.renderFrame(List.of(p)); verify(p,never()).sendActionBar(anyString());
+    }
+
     @Test
     void worldEditAndIndependentRegionPreviewStayPersonalAndDoNotMutateSelection() {
         RegionSelectionService selections = new RegionSelectionService();
@@ -57,19 +93,18 @@ final class RegionPreviewServiceTest {
         selections.setSecond(adminId, "test_world", 10, 80, 10);
 
         preview.renderFrame(List.of(admin, other));
-        verify(admin, times(180)).spawnParticle(eq(Particle.END_ROD), anyDouble(), anyDouble(), anyDouble(), eq(1));
-        verify(admin, atLeastOnce()).spawnParticle(eq(Particle.END_ROD), anyDouble(), eq(-40.0), anyDouble(), eq(1));
-        verify(admin, atLeastOnce()).spawnParticle(eq(Particle.END_ROD), anyDouble(), eq(200.0), anyDouble(), eq(1));
-        verify(admin, times(2)).spawnParticle(eq(Particle.FLAME), anyDouble(), anyDouble(), anyDouble(), eq(3));
-        verify(admin).spawnParticle(Particle.FLAME, 0.5, 60.5, 0.5, 3);
-        verify(admin).spawnParticle(Particle.FLAME, 10.5, 80.5, 10.5, 3);
+        var samples=org.mockito.ArgumentCaptor.forClass(Double.class);
+        verify(admin, atLeastOnce()).spawnParticle(eq(Particle.DUST), anyDouble(), samples.capture(), anyDouble(), eq(1), eq(0.0), eq(0.0), eq(0.0), eq(0.0), any(Particle.DustOptions.class));
+        org.junit.jupiter.api.Assertions.assertTrue(samples.getAllValues().contains(-40.0));
+        org.junit.jupiter.api.Assertions.assertTrue(samples.getAllValues().contains(200.0));
+        org.junit.jupiter.api.Assertions.assertTrue(samples.getAllValues().size() <= 192);
         verify(admin).sendActionBar(org.mockito.ArgumentMatchers.<String>argThat(message -> message.contains("test_world")
                 && message.contains("0,60,0") && message.contains("10,80,10")
                 && message.contains("11x240x11")));
         verify(other, never()).sendActionBar(anyString());
         verify(world).getName();
-        verify(world).getMinHeight();
-        verify(world).getMaxHeight();
+        verify(world, atLeastOnce()).getMinHeight();
+        verify(world, atLeastOnce()).getMaxHeight();
         verifyNoMoreInteractions(world); // No getBlockAt, setType, or other world mutation.
 
         clearInvocations(admin);
@@ -77,8 +112,8 @@ final class RegionPreviewServiceTest {
         preview.renderFrame(List.of(admin));
         verify(admin).sendActionBar(org.mockito.ArgumentMatchers.<String>argThat(message -> message.contains("exact")
                 && message.contains("11x21x11")));
-        verify(admin, atLeastOnce()).spawnParticle(eq(Particle.END_ROD), anyDouble(), eq(60.0), anyDouble(), eq(1));
-        verify(admin, atLeastOnce()).spawnParticle(eq(Particle.END_ROD), anyDouble(), eq(81.0), anyDouble(), eq(1));
+        verify(admin, atLeastOnce()).spawnParticle(eq(Particle.DUST), anyDouble(), eq(60.0), anyDouble(), eq(1), eq(0.0), eq(0.0), eq(0.0), eq(0.0), any(Particle.DustOptions.class));
+        verify(admin, atLeastOnce()).spawnParticle(eq(Particle.DUST), anyDouble(), eq(81.0), anyDouble(), eq(1), eq(0.0), eq(0.0), eq(0.0), eq(0.0), any(Particle.DustOptions.class));
 
         clearInvocations(admin);
         selections.togglePreview(adminId);

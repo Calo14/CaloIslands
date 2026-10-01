@@ -17,6 +17,41 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 
 final class RegionServiceTest {
+    @Test void arrivalPointIsIndependentDurableAndPreservedByRegionEdits() throws Exception {
+        MemoryRepository repository = new MemoryRepository();
+        RegionService service = new RegionService(repository,w -> Optional.of(new RegionService.WorldHeight(-64,320)));
+        Bounds bounds = new Bounds(0,-64,0,10,319,10);
+        service.createRegion("point_region","test_world",bounds);
+        assertNull(service.region("point_region").orElseThrow().destination());
+        var point = new me.calo.islands.domain.Destination("test_world", 50.25,64,50.75,123,-32);
+        // Arrival points are not geometry or corners; administrators may choose an entrance outside.
+        Region saved=service.setRegionPoint("point_region",point);
+        assertEquals(bounds,saved.bounds()); assertEquals(2,saved.version());
+        assertEquals(saved,service.setRegionPoint("point_region",point));
+        RegionService restarted=new RegionService(repository,w -> Optional.of(new RegionService.WorldHeight(-64,320)));
+        assertEquals(point,restarted.region("point_region").orElseThrow().destination());
+        assertEquals(point,restarted.setActive("point_region",true).destination());
+        restarted.setActive("point_region",false);
+        assertEquals(point,restarted.resizeRegion("point_region",new Bounds(0,-64,0,20,319,20)).destination());
+        restarted.setRegionPoint("point_region",null);
+        assertNull(new RegionService(repository,w -> Optional.of(new RegionService.WorldHeight(-64,320)))
+                .region("point_region").orElseThrow().destination());
+        assertThrows(IllegalArgumentException.class,()->restarted.setRegionPoint("point_region",
+                new me.calo.islands.domain.Destination("another_world",0,64,0,0,0)));
+        assertThrows(IllegalArgumentException.class,()->restarted.setRegionPoint("point_region",
+                new me.calo.islands.domain.Destination("test_world",0,320,0,0,0)));
+        assertThrows(IllegalArgumentException.class,()->new me.calo.islands.domain.Destination("test_world",Double.NaN,64,0,0,0));
+    }
+    @Test void cityOrientationSurvivesReloadAndCoordinateOnlyCompatibilityCalls() throws Exception {
+        MemoryRepository repository = new MemoryRepository();
+        RegionService service=new RegionService(repository,w -> Optional.of(new RegionService.WorldHeight(-64,320)));
+        service.createRegion("city_region","test_world",new Bounds(0,0,0,20,100,20));
+        service.createCity("arrival_city","city_region",5.5,64,5.5,90,-20);
+        service.moveCity("arrival_city","city_region",6.5,64,6.5);
+        City loaded=new RegionService(repository,w -> Optional.of(new RegionService.WorldHeight(-64,320))).city("arrival_city").orElseThrow();
+        assertEquals(90,loaded.destination().yaw()); assertEquals(-20,loaded.destination().pitch());
+    }
+
     @Test
     void committedChangesImmediatelyUpdateEntrySnapshot() throws SQLException {
         MemoryRepository repository = new MemoryRepository();

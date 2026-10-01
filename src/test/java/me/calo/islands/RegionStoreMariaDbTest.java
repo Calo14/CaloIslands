@@ -61,11 +61,18 @@ final class RegionStoreMariaDbTest {
             assertThrows(IllegalStateException.class,
                     () -> service.resizeRegion("test_region", Bounds.between(0, 60, 0, 15, 80, 15)));
 
+            var point = new me.calo.islands.domain.Destination("test_world", 5.5, 70, 5.5, 72, -15);
+            assertNull(service.region("test_region").orElseThrow().destination());
+            service.setRegionPoint("test_region", point);
             RegionService restarted = new RegionService(new RegionStore(source), world -> loaded.contains(world)
                     ? Optional.of(new RegionService.WorldHeight(-40, 200)) : Optional.empty());
             assertTrue(restarted.region("test_region").orElseThrow().active());
             assertEquals("test_world", restarted.city("test_city").orElseThrow().world());
             assertEquals(5.5, restarted.city("test_city").orElseThrow().x());
+            assertEquals(point, restarted.region("test_region").orElseThrow().destination());
+            restarted.setRegionPoint("test_region", null);
+            assertNull(new RegionService(new RegionStore(source), w -> Optional.of(new RegionService.WorldHeight(-40,200)))
+                    .region("test_region").orElseThrow().destination());
             loaded.clear();
             assertFalse(restarted.operational(restarted.region("test_region").orElseThrow()));
             loaded.add("test_world");

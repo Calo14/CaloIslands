@@ -3,13 +3,18 @@ version: 2.0.0-SNAPSHOT
 main: me.calo.islands.CaloIslandsPlugin
 api-version: '1.21'
 description: Local Vaelkor region and city registry
-softdepend: [WorldEdit, WorldGuard, Lands]
+softdepend: [WorldEdit, WorldGuard, Lands, GoldenRPG]
 commands:
   caloislands:
     aliases: [calo]
     usage: /calo help
     permission: caloislands.admin
+  caloactivity:
+    usage: /caloactivity <list|activate [id]|join id|status [id]|leave|cancel [id]>
+    permission: caloislands.activity
 permissions:
+  caloislands.activity:
+    default: true
   caloislands.admin:
     default: op
   caloislands.protection.bypass:

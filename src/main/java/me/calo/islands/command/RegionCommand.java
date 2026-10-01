@@ -27,7 +27,15 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
     private final SelectionTool tool;
     private final Messages messages;
     private final SelectionSource externalSelection;
+    private me.calo.islands.core.AdminTeleportService teleport;
+    private me.calo.islands.core.RegionPreviewService previews;
+    private java.util.function.Supplier<List<String>> validator;
+    public void setValidator(java.util.function.Supplier<List<String>> validator) { this.validator = validator; }
+    public void setServices(me.calo.islands.core.AdminTeleportService teleport, me.calo.islands.core.RegionPreviewService previews) {
+        this.teleport = teleport; this.previews = previews;
+    }
     private java.util.function.Consumer<Player> menu;
+    public Messages messages() { return messages; }
     public void setMenu(java.util.function.Consumer<Player> menu) { this.menu = menu; }
 
     public RegionCommand(RegionService regions, RegionSelectionService selections,
@@ -61,6 +69,13 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
                 case "region" -> region(sender, args);
                 case "city" -> city(sender, args);
                 case "here" -> here(sender);
+                case "validate" -> {
+                    require(args, 1);
+                    if (validator == null) throw new IllegalStateException("Validador no disponible.");
+                    List<String> issues = validator.get();
+                    if (issues.isEmpty()) sender.sendMessage("§aConfiguración, actividades y mensajes válidos.");
+                    else issues.forEach(sender::sendMessage);
+                }
                 default -> help(sender);
             }
         } catch (SelectionSource.UnsupportedShape e) {
@@ -89,7 +104,23 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
                 require(a, 3);
                 Region r = regions.region(a[2]).orElseThrow(() -> new IllegalArgumentException(messages.text("unknown-region")));
                 messages.send(sender, "region-info", "id", r.id(), "world", r.world(), "bounds", r.bounds(),
-                        "active", r.active(), "operational", regions.operational(r), "version", r.version());
+                        "active", r.active(), "operational", regions.operational(r), "version", r.version(),
+                        "point", r.destination() == null ? messages.text("point-unset") : r.destination());
+            }
+            case "teleport" -> {
+                require(a, 3);
+                if (teleport == null) throw new IllegalStateException(messages.text("integration-error"));
+                teleport.region(player(sender), a[2]);
+            }
+            case "setpoint", "clearpoint" -> {
+                require(a, 3);
+                Player p = player(sender);
+                if (regions.region(a[2]).isEmpty()) throw new IllegalArgumentException(messages.text("unknown-region"));
+                Location at = p.getLocation();
+                regions.setRegionPoint(a[2], a[1].equalsIgnoreCase("clearpoint") ? null :
+                        new me.calo.islands.domain.Destination(at.getWorld().getName(), at.getX(), at.getY(), at.getZ(), at.getYaw(), at.getPitch()));
+                if (previews != null) previews.invalidate(a[2]);
+                messages.send(p, a[1].equalsIgnoreCase("clearpoint") ? "point-cleared" : "point-saved");
             }
             case "create" -> {
                 require(a, 3);
@@ -99,6 +130,7 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
                 validateWorldBounds(selection.world(), area);
                 Region created = regions.createRegion(a[2], selection.world(), area);
                 clearSelection(player);
+                if (previews != null) previews.clearAll();
                 messages.send(sender, "region-created", "id", created.id());
             }
             case "resize" -> {
@@ -113,6 +145,7 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
                 validateWorldBounds(current.world(), area);
                 Region resized = regions.resizeRegion(a[2], area);
                 clearSelection(player);
+                if (previews != null) previews.invalidate(a[2]);
                 messages.send(sender, "region-resized", "id", resized.id());
             }
             case "wand" -> {
@@ -140,10 +173,24 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
                 messages.send(player, "mode-set", "mode", mode.name().toLowerCase());
             }
             case "preview" -> {
-                require(a, 2);
+                if (a.length != 2 && a.length != 3) throw new IllegalArgumentException(messages.text("wrong-arguments"));
                 Player player = player(sender);
-                if (externalSelection != null) { messages.send(player, "worldedit-preview"); return; }
-                boolean enabled = selections.togglePreview(player.getUniqueId());
+                if (a.length == 3) {
+                    Region r = regions.region(a[2]).orElseThrow(() -> new IllegalArgumentException(messages.text("unknown-region")));
+                    if (previews == null) throw new IllegalStateException(messages.text("integration-error"));
+                    if (previews.showingRegion(player.getUniqueId(), r.id())) {
+                        previews.stop(player.getUniqueId()); messages.send(player, "preview-off"); return;
+                    }
+                    if (!player.getWorld().getName().equals(r.world()))
+                        throw new IllegalArgumentException(messages.text("preview-world-mismatch"));
+                    previews.region(player.getUniqueId(), r);
+                    messages.send(player, "preview-on"); return;
+                }
+                boolean enabled = previews == null ? selections.togglePreview(player.getUniqueId()) : !previews.active(player.getUniqueId());
+                if (previews != null) {
+                    if (enabled) { completeSelection(player); previews.startSelection(player.getUniqueId()); }
+                    else previews.stop(player.getUniqueId());
+                }
                 messages.send(player, enabled ? "preview-on" : "preview-off");
             }
             case "clear" -> {
@@ -154,11 +201,13 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
             case "activate", "deactivate" -> {
                 require(a, 3);
                 Region r = regions.setActive(a[2], a[1].equalsIgnoreCase("activate"));
+                if (previews != null) previews.invalidate(a[2]);
                 messages.send(sender, "region-state", "id", r.id(), "active", r.active(), "version", r.version());
             }
             case "delete" -> {
                 require(a, 3);
                 regions.deleteRegion(a[2]);
+                if (previews != null) previews.invalidate(a[2]);
                 messages.send(sender, "region-deleted", "id", a[2]);
             }
             default -> help(sender);
@@ -185,12 +234,17 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
                                 r.active() ? "city-state-active" : "city-state-inactive"),
                         "operational", regions.operational(r), "version", c.version());
             }
+            case "teleport" -> {
+                require(a, 3);
+                if (teleport == null) throw new IllegalStateException(messages.text("integration-error"));
+                teleport.city(player(sender), a[2]);
+            }
             case "create" -> {
                 require(a, 4);
                 Location location = player(sender).getLocation();
                 Region region = regions.region(a[3]).orElseThrow(() -> new IllegalArgumentException(messages.text("unknown-region")));
                 requireSameWorld(location, region);
-                City c = regions.createCity(a[2], a[3], location.getX(), location.getY(), location.getZ());
+                City c = regions.createCity(a[2], a[3], location.getX(), location.getY(), location.getZ(), location.getYaw(), location.getPitch());
                 messages.send(sender, "city-updated-v2", "id", c.id(), "region", c.regionId(), "world", c.world(),
                         "x", c.x(), "y", c.y(), "z", c.z(), "version", c.version());
             }
@@ -200,7 +254,7 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
                 City old = regions.city(a[2]).orElseThrow(() -> new IllegalArgumentException(messages.text("unknown-city")));
                 Region region = regions.region(old.regionId()).orElseThrow(() -> new IllegalArgumentException(messages.text("unknown-region")));
                 requireSameWorld(location, region);
-                City c = regions.moveCity(a[2], old.regionId(), location.getX(), location.getY(), location.getZ());
+                City c = regions.moveCity(a[2], old.regionId(), location.getX(), location.getY(), location.getZ(), location.getYaw(), location.getPitch());
                 messages.send(sender, "city-updated-v2", "id", c.id(), "region", c.regionId(), "world", c.world(),
                         "x", c.x(), "y", c.y(), "z", c.z(), "version", c.version());
             }
@@ -260,6 +314,7 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
     private void clearSelection(Player player) {
         if (externalSelection != null) externalSelection.clear(player);
         selections.clear(player.getUniqueId());
+        if (previews != null) previews.stop(player.getUniqueId());
     }
 
     private Player player(CommandSender sender) {
@@ -296,24 +351,25 @@ public final class RegionCommand implements CommandExecutor, TabCompleter {
         messages.send(sender, externalSelection == null ? "help-selection" : "help-worldedit-selection");
         messages.send(sender, "help-city");
         messages.send(sender, "help-here");
+        messages.send(sender, "help-destination");
     }
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!sender.hasPermission("caloislands.admin")) return List.of();
-        if (args.length == 1) return matching(List.of("region", "city", "here", "help", "menu"), args[0]);
+        if (args.length == 1) return matching(List.of("region", "city", "here", "help", "menu", "validate"), args[0]);
         if (args.length == 2 && args[0].equalsIgnoreCase("region"))
-            return matching(List.of("wand", "selection", "mode", "preview", "clear", "list", "info", "create", "resize", "activate", "deactivate", "delete"), args[1]);
+            return matching(List.of("wand", "selection", "mode", "preview", "clear", "list", "info", "create", "resize", "activate", "deactivate", "delete", "setpoint", "teleport", "clearpoint"), args[1]);
         if (args.length == 3 && args[0].equalsIgnoreCase("region") && args[1].equalsIgnoreCase("mode"))
             return matching(List.of("fullheight", "exact"), args[2]);
         if (args.length == 2 && args[0].equalsIgnoreCase("city"))
-            return matching(List.of("list", "info", "create", "move", "delete"), args[1]);
+            return matching(List.of("list", "info", "create", "move", "delete", "teleport"), args[1]);
         try {
             if (args.length == 3 && args[0].equalsIgnoreCase("region")
-                    && List.of("info", "resize", "activate", "deactivate", "delete").contains(args[1].toLowerCase()))
+                    && List.of("info", "resize", "activate", "deactivate", "delete", "setpoint", "teleport", "clearpoint", "preview").contains(args[1].toLowerCase()))
                 return matching(regions.regions().stream().map(Region::id).toList(), args[2]);
             if (args.length == 3 && args[0].equalsIgnoreCase("city")
-                    && List.of("info", "move", "delete").contains(args[1].toLowerCase()))
+                    && List.of("info", "move", "delete", "teleport").contains(args[1].toLowerCase()))
                 return matching(regions.cities().stream().map(City::id).toList(), args[2]);
             if (args.length == 4 && args[0].equalsIgnoreCase("city") && args[1].equalsIgnoreCase("create"))
                 return matching(regions.regions().stream().map(Region::id).toList(), args[3]);

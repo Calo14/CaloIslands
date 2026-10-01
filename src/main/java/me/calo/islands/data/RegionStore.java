@@ -1,6 +1,7 @@
 package me.calo.islands.data;
 
 import me.calo.islands.domain.Bounds;
+import me.calo.islands.domain.Destination;
 import me.calo.islands.domain.City;
 import me.calo.islands.domain.Region;
 
@@ -51,10 +52,10 @@ public final class RegionStore implements RegionRepository {
             lockWorld(connection, value.world());
             ensureNoOverlap(connection, value);
             try (PreparedStatement query = connection.prepareStatement(
-                    "INSERT INTO calo_regions (id,world_name,min_x,min_y,min_z,max_x,max_y,max_z,active,version) VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+                    "INSERT INTO calo_regions (id,world_name,min_x,min_y,min_z,max_x,max_y,max_z,active,version,point_world,point_x,point_y,point_z,point_yaw,point_pitch) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
                 query.setString(1, value.id()); query.setString(2, value.world());
                 bounds(query, 3, value.bounds()); query.setBoolean(9, value.active());
-                query.setInt(10, value.version()); query.executeUpdate();
+                query.setInt(10, value.version()); destination(query, 11, value.destination()); query.executeUpdate();
             }
             return null;
         });
@@ -72,12 +73,12 @@ public final class RegionStore implements RegionRepository {
                 ensureNoOverlap(connection, next);
             }
             try (PreparedStatement query = connection.prepareStatement("""
-                    UPDATE calo_regions SET min_x=?,min_y=?,min_z=?,max_x=?,max_y=?,max_z=?,active=?,version=?
+                    UPDATE calo_regions SET min_x=?,min_y=?,min_z=?,max_x=?,max_y=?,max_z=?,active=?,version=?,point_world=?,point_x=?,point_y=?,point_z=?,point_yaw=?,point_pitch=?
                     WHERE id=? AND version=?
                     """)) {
                 bounds(query, 1, next.bounds()); query.setBoolean(7, next.active());
-                query.setInt(8, next.version()); query.setString(9, next.id());
-                query.setInt(10, expectedVersion); return query.executeUpdate() == 1;
+                query.setInt(8, next.version()); destination(query, 9, next.destination()); query.setString(15, next.id());
+                query.setInt(16, expectedVersion); return query.executeUpdate() == 1;
             }
         });
     }
@@ -118,7 +119,7 @@ public final class RegionStore implements RegionRepository {
         transaction(connection -> {
             requireCityInside(connection, value);
             try (PreparedStatement query = connection.prepareStatement(
-                    "INSERT INTO calo_cities (id,region_id,world_name,x,y,z,version) VALUES (?,?,?,?,?,?,?)")) {
+                    "INSERT INTO calo_cities (id,region_id,world_name,x,y,z,version,yaw,pitch) VALUES (?,?,?,?,?,?,?,?,?)")) {
                 cityValues(query, value); query.executeUpdate();
             }
             return null;
@@ -129,12 +130,12 @@ public final class RegionStore implements RegionRepository {
         return transaction(connection -> {
             requireCityInside(connection, next);
             try (PreparedStatement query = connection.prepareStatement("""
-                    UPDATE calo_cities SET region_id=?,world_name=?,x=?,y=?,z=?,version=? WHERE id=? AND version=?
+                    UPDATE calo_cities SET region_id=?,world_name=?,x=?,y=?,z=?,version=?,yaw=?,pitch=? WHERE id=? AND version=?
                     """)) {
                 query.setString(1, next.regionId()); query.setString(2, next.world());
                 query.setDouble(3, next.x()); query.setDouble(4, next.y()); query.setDouble(5, next.z());
-                query.setInt(6, next.version()); query.setString(7, next.id());
-                query.setInt(8, expectedVersion); return query.executeUpdate() == 1;
+                query.setInt(6, next.version()); query.setFloat(7, next.yaw()); query.setFloat(8, next.pitch()); query.setString(9, next.id());
+                query.setInt(10, expectedVersion); return query.executeUpdate() == 1;
             }
         });
     }
@@ -209,7 +210,24 @@ public final class RegionStore implements RegionRepository {
     private static void cityValues(PreparedStatement query, City value) throws SQLException {
         query.setString(1, value.id()); query.setString(2, value.regionId()); query.setString(3, value.world());
         query.setDouble(4, value.x()); query.setDouble(5, value.y()); query.setDouble(6, value.z());
-        query.setInt(7, value.version());
+        query.setInt(7, value.version()); query.setFloat(8, value.yaw()); query.setFloat(9, value.pitch());
+    }
+
+    private static Destination destination(ResultSet row) throws SQLException {
+        String world = row.getString("point_world");
+        if (world == null) return null;
+        for (String field : new String[]{"point_x", "point_y", "point_z", "point_yaw", "point_pitch"})
+            if (row.getObject(field) == null) throw new SQLException("Incomplete region destination");
+        return new Destination(world, row.getDouble("point_x"), row.getDouble("point_y"), row.getDouble("point_z"), row.getFloat("point_yaw"), row.getFloat("point_pitch"));
+    }
+    private static void destination(PreparedStatement query, int first, Destination point) throws SQLException {
+        if (point == null) {
+            query.setNull(first, java.sql.Types.VARCHAR);
+            for (int i=1; i<=5; i++) query.setNull(first+i, java.sql.Types.DOUBLE);
+        } else {
+            query.setString(first, point.world()); query.setDouble(first+1, point.x()); query.setDouble(first+2, point.y());
+            query.setDouble(first+3, point.z()); query.setFloat(first+4, point.yaw()); query.setFloat(first+5, point.pitch());
+        }
     }
 
     private static void bounds(PreparedStatement query, int first, Bounds b) throws SQLException {
@@ -221,12 +239,12 @@ public final class RegionStore implements RegionRepository {
         return new Region(row.getString("id"), row.getString("world_name"), new Bounds(
                 row.getInt("min_x"), row.getInt("min_y"), row.getInt("min_z"),
                 row.getInt("max_x"), row.getInt("max_y"), row.getInt("max_z")),
-                row.getBoolean("active"), row.getInt("version"));
+                row.getBoolean("active"), row.getInt("version"), destination(row));
     }
 
     private static City city(ResultSet row) throws SQLException {
         return new City(row.getString("id"), row.getString("region_id"), row.getString("world_name"),
-                row.getDouble("x"), row.getDouble("y"), row.getDouble("z"), row.getInt("version"));
+                row.getDouble("x"), row.getDouble("y"), row.getDouble("z"), row.getInt("version"), row.getFloat("yaw"), row.getFloat("pitch"));
     }
 
     private <T> T transaction(Work<T> work) throws SQLException {

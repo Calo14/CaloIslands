@@ -27,7 +27,43 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 final class RegionCommandTest {
+    @Test void savedRegionPreviewTogglesWithoutSelectionAndClearStopsIt() throws Exception {
+        RegionService regions=mock(RegionService.class); var selections=new RegionSelectionService();
+        var preview=new me.calo.islands.core.RegionPreviewService(selections,me.calo.islands.core.PreviewSettings.read(null),messages);
+        RegionCommand command=new RegionCommand(regions,selections,mock(SelectionTool.class),messages);
+        command.setServices(mock(me.calo.islands.core.AdminTeleportService.class),preview);
+        Player p=admin(); World world=mock(World.class); when(world.getName()).thenReturn("test_world"); when(p.getWorld()).thenReturn(world);
+        Region region=new Region("test_region","test_world",new Bounds(0,-64,0,10,319,10),true,1);
+        when(regions.region("test_region")).thenReturn(Optional.of(region));
+        invoke(command,p,"region","preview","test_region"); assertTrue(preview.showingRegion(p.getUniqueId(),"test_region"));
+        invoke(command,p,"region","preview","test_region"); assertFalse(preview.active(p.getUniqueId()));
+        invoke(command,p,"region","preview"); assertFalse(preview.active(p.getUniqueId()));
+        verify(p).sendMessage(contains("Debes marcar"));
+        invoke(command,p,"region","preview","test_region"); invoke(command,p,"region","clear");
+        assertFalse(preview.active(p.getUniqueId())); assertTrue(selections.get(p.getUniqueId()).isEmpty());
+        verify(regions,never()).resizeRegion(anyString(),any());
+    }
     private final Messages messages = new Messages(new File("src/main/resources/messages.yml"));
+
+    @Test void pointCommandsUseCurrentOrientationClearAndCompleteIds() throws Exception {
+        RegionService regions=mock(RegionService.class);
+        RegionCommand command=new RegionCommand(regions,new RegionSelectionService(),mock(SelectionTool.class),messages);
+        var teleport=mock(me.calo.islands.core.AdminTeleportService.class);
+        var preview=mock(me.calo.islands.core.RegionPreviewService.class); command.setServices(teleport,preview);
+        Player p=admin(); World world=mock(World.class); when(world.getName()).thenReturn("test_world");
+        when(p.getLocation()).thenReturn(new Location(world,5.25,70,6.75,67,-12));
+        Region region=new Region("test_region","test_world",new Bounds(0,60,0,10,80,10),true,1);
+        when(regions.region("test_region")).thenReturn(Optional.of(region)); when(regions.regions()).thenReturn(java.util.List.of(region));
+        invoke(command,p,"region","setpoint","test_region");
+        verify(regions).setRegionPoint("test_region",new me.calo.islands.domain.Destination("test_world",5.25,70,6.75,67,-12));
+        invoke(command,p,"region","teleport","test_region"); verify(teleport).region(p,"test_region");
+        invoke(command,p,"region","clearpoint","test_region"); verify(regions).setRegionPoint("test_region",null);
+        assertEquals(java.util.List.of("test_region"),command.onTabComplete(p,null,"calo",new String[]{"region","teleport","test"}));
+        when(p.hasPermission("caloislands.admin")).thenReturn(false); clearInvocations(regions,teleport);
+        invoke(command,p,"region","setpoint","test_region"); invoke(command,p,"region","teleport","test_region");
+        verifyNoInteractions(regions,teleport);
+        assertTrue(command.onTabComplete(p,null,"calo",new String[]{"region","setpoint",""}).isEmpty());
+    }
 
     @Test
     void wandAndSelectionCreateNormalizedRegionThenClearOnlyOnSuccess() throws Exception {
@@ -145,11 +181,11 @@ final class RegionCommandTest {
                 new Location(world, 7.5, 70, 8.5));
         Region region = new Region("test_region", "test_world", new Bounds(0, 60, 0, 10, 80, 10), true, 2);
         when(regions.region("test_region")).thenReturn(Optional.of(region));
-        when(regions.createCity("test_city", "test_region", 5.5, 70, 6.5)).thenReturn(
+        when(regions.createCity("test_city", "test_region", 5.5, 70, 6.5, 0, 0)).thenReturn(
                 new City("test_city", "test_region", "test_world", 5.5, 70, 6.5, 1));
         when(regions.city("test_city")).thenReturn(Optional.of(
                 new City("test_city", "test_region", "test_world", 5.5, 70, 6.5, 1)));
-        when(regions.moveCity("test_city", "test_region", 7.5, 70, 8.5)).thenReturn(
+        when(regions.moveCity("test_city", "test_region", 7.5, 70, 8.5, 0, 0)).thenReturn(
                 new City("test_city", "test_region", "test_world", 7.5, 70, 8.5, 2));
         invoke(command, player, "city", "create", "test_city", "test_region");
         invoke(command, player, "city", "move", "test_city");
@@ -159,8 +195,8 @@ final class RegionCommandTest {
                 "test_city", "test_region", "test_world", 7.5, 70, 8.5, 2)));
         invoke(command, player, "city", "list");
         invoke(command, player, "city", "delete", "test_city");
-        verify(regions).createCity("test_city", "test_region", 5.5, 70, 6.5);
-        verify(regions).moveCity("test_city", "test_region", 7.5, 70, 8.5);
+        verify(regions).createCity("test_city", "test_region", 5.5, 70, 6.5, 0, 0);
+        verify(regions).moveCity("test_city", "test_region", 7.5, 70, 8.5, 0, 0);
         verify(regions).deleteCity("test_city");
         verify(player, atLeastOnce()).sendMessage(contains("estado=activa"));
         verify(player, atLeastOnce()).sendMessage(contains("test_city@test_region"));

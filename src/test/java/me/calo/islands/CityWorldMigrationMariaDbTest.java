@@ -66,7 +66,7 @@ final class CityWorldMigrationMariaDbTest {
                     "UPDATE calo_cities SET world_name='other_world' WHERE id='city_v1'"));
             try (ResultSet version = sql.executeQuery("SELECT version FROM calo_schema_version WHERE id=1")) {
                 assertTrue(version.next());
-                assertEquals(2, version.getInt(1));
+                assertEquals(8, version.getInt(1));
             }
         }
     }

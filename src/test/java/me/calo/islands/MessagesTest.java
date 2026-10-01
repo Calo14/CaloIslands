@@ -30,4 +30,36 @@ final class MessagesTest {
             Files.deleteIfExists(old.toPath());
         }
     }
+
+    @Test
+    void auditReportsMissingUnknownAndBrokenPlaceholdersTogether() throws Exception {
+        File custom = Files.createTempFile("calo-translations", ".yml").toFile();
+        try {
+            Files.writeString(custom.toPath(), "region-created: '&a{other}'\nunknown-entry: 'extra'\n");
+            var issues = Messages.audit(custom);
+            assertTrue(issues.stream().anyMatch(line -> line.contains("region-created")
+                    && line.contains("placeholders")));
+            assertTrue(issues.stream().anyMatch(line -> line.contains("unknown-entry")
+                    && line.contains("desconocida")));
+            assertTrue(issues.stream().anyMatch(line -> line.contains("no-permission")
+                    && line.contains("falta")));
+        } finally {
+            Files.deleteIfExists(custom.toPath());
+        }
+    }
+
+    @Test
+    void auditChecksListPlaceholdersAndMalformedBraces() throws Exception {
+        File custom = Files.createTempFile("calo-translation-list", ".yml").toFile();
+        try {
+            Files.writeString(custom.toPath(), Files.readString(new File("src/main/resources/messages.yml").toPath())
+                    .replace("region-created: '&aRegión registrada: {id}'", "region-created: '&aRegión registrada: {id'")
+                    .replace("  - '&7Izquierdo: Posición 1'", "  - '&7Izquierdo: {missing}'"));
+            var issues = Messages.audit(custom);
+            assertTrue(issues.stream().anyMatch(line -> line.contains("region-created") && line.contains("placeholders")));
+            assertTrue(issues.stream().anyMatch(line -> line.contains("wand-lore") && line.contains("placeholders")));
+        } finally {
+            Files.deleteIfExists(custom.toPath());
+        }
+    }
 }

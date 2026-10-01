@@ -1,9 +1,20 @@
 package me.calo.islands.gui;
 
+import java.util.StringJoiner;
+
 /** Shared state colours and Spanish explanations for existing domain-service failures. */
 public final class MenuText {
     private MenuText() { }
-    public static String state(boolean active) { return active ? "§aactiva" : "§cinactiva"; }
+    public static String state(boolean active) { return active ? "§aActiva" : "§cInactiva"; }
+    public static String label(String id) {
+        String[] words = id.replace('_', ' ').split("\\s+");
+        StringJoiner label = new StringJoiner(" ");
+        for (String word : words) {
+            if (word.isEmpty()) continue;
+            label.add(word.substring(0, 1).toUpperCase(java.util.Locale.ROOT) + word.substring(1));
+        }
+        return label.toString();
+    }
     public static String error(String reason) {
         if (reason == null) return "No se pudo completar la acción.";
         return switch (reason) {

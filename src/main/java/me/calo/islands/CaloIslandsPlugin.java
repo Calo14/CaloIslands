@@ -34,6 +34,18 @@ import java.util.function.Supplier;
 public final class CaloIslandsPlugin extends JavaPlugin {
     private DatabasePool pool;
     private BukkitTask previewTask;
+    private BukkitTask signalTask;
+    private RegionPreviewService previewService;
+    private me.calo.islands.core.ActivityService activities;
+    private me.calo.islands.content.PointDefenseService pointDefense;
+    private me.calo.islands.content.ObjectiveActivityService objectives;
+    private me.calo.islands.content.ObjectiveCatalog objectiveCatalog;
+    private me.calo.islands.content.ActivityRewardBridge rewardBridge;
+    /** Future content providers bind cleanup before starting runs; no default gameplay is registered. */
+    public me.calo.islands.core.ActivityService activities() {
+        if (activities == null || !isEnabled()) throw new IllegalStateException("CaloIslands is unavailable");
+        return activities;
+    }
 
     @Override
     public void onEnable() {
@@ -48,7 +60,9 @@ public final class CaloIslandsPlugin extends JavaPlugin {
             DatabaseConfig database = DatabaseConfig.read(getConfig().getConfigurationSection("database"));
             ProtectionSettings protection = ProtectionSettings.read(getConfig().getConfigurationSection("protection"));
             PreviewSettings previewSettings = PreviewSettings.read(getConfig().getConfigurationSection("preview"));
-            Messages messages = new Messages(new File(getDataFolder(), "messages.yml"));
+            File messageFile = new File(getDataFolder(), "messages.yml");
+            Messages.audit(messageFile).forEach(getLogger()::warning);
+            Messages messages = new Messages(messageFile);
             SelectionTool tool = new SelectionTool(this, getConfig().getString("wand.material", "WOODEN_AXE"), messages);
             pool = new DatabasePool(database);
             new SchemaMigrator(pool.dataSource()).migrate();
@@ -64,7 +78,10 @@ public final class CaloIslandsPlugin extends JavaPlugin {
             logIntegration("WorldEdit", worldEdit);
             SelectionSource externalSelection = worldEdit.adapter();
             RegionPreviewService preview = new RegionPreviewService(selections, previewSettings, messages, externalSelection);
+            previewService = preview;
+            preview.setRegions(regions::regions);
             RegionCommand command = new RegionCommand(regions, selections, tool, messages, externalSelection);
+            command.setValidator(() -> me.calo.islands.core.CaloValidation.inspect(this, regions));
             getCommand("caloislands").setExecutor(command);
             getCommand("caloislands").setTabCompleter(command);
             List<ExternalProtection> authorities = new ArrayList<>();
@@ -76,14 +93,64 @@ public final class CaloIslandsPlugin extends JavaPlugin {
                 if (getServer().getPluginManager().getPlugin(name) != null && !getServer().getPluginManager().isPluginEnabled(name))
                     teleportAuthorities.add((player, action, location) -> true);
             }
+            var teleport = new me.calo.islands.core.AdminTeleportService(regions, teleportAuthorities, messages, protection.denyActiveEntry());
+            activities = new me.calo.islands.core.ActivityService(new me.calo.islands.data.ActivityStore(pool.dataSource()),
+                    regions, Bukkit::isPrimaryThread, (player, definition) -> teleport.canAccess(player, definition.entry()),
+                    signal -> Bukkit.getPluginManager().callEvent(new me.calo.islands.content.ActivitySignalEvent(signal)));
+            var defenseSettings = me.calo.islands.content.PointDefenseSettings.read(
+                    getConfig().getConfigurationSection("activity.defense"));
+            if (defenseSettings != null) {
+                pointDefense = new me.calo.islands.content.PointDefenseService(
+                        this, activities, regions, defenseSettings);
+                pointDefense.start();
+            }
+            var objectiveSettings = me.calo.islands.content.ObjectiveSettings.read(
+                    getConfig().getConfigurationSection("activity.objectives"));
+            if (defenseSettings != null && objectiveSettings.containsKey(defenseSettings.id()))
+                throw new IllegalArgumentException("activity.defense and activity.objectives share an id");
+            objectiveCatalog = new me.calo.islands.content.ObjectiveCatalog(
+                    new me.calo.islands.data.ObjectiveDefinitionStore(pool.dataSource()), regions,
+                    teleport::canAccess, objectiveSettings,
+                    defenseSettings == null ? java.util.Set.of() : java.util.Set.of(defenseSettings.id()));
+            if (defenseSettings != null && objectiveCatalog.list().stream().anyMatch(d -> d.id().equals(defenseSettings.id())))
+                throw new IllegalArgumentException("activity.defense and managed objectives share an id");
+            objectives = new me.calo.islands.content.ObjectiveActivityService(this, activities,
+                    regions, objectiveCatalog.enabledSettings(), objectiveCatalog.enabledStarts(),
+                    (player, action, location) -> {
+                        try {
+                            return teleportAuthorities.stream()
+                                    .noneMatch(authority -> authority.deniesEntry(player, location)
+                                            || authority.denies(player, action, location));
+                        } catch (RuntimeException | LinkageError unavailable) { return false; }
+                    });
+            objectives.start();
+            objectiveCatalog.attach(objectives);
+            command.setValidator(() -> me.calo.islands.core.CaloValidation.inspect(this, regions, objectiveCatalog));
+            java.util.Set<String> rewardContent = new java.util.HashSet<>(objectiveSettings.keySet());
+            objectiveCatalog.list().forEach(value -> rewardContent.add(value.id()));
+            if (defenseSettings != null) rewardContent.add(defenseSettings.id());
+            var rewardRules = me.calo.islands.content.ActivityRewardRules.read(
+                    getConfig().getConfigurationSection("activity.reward-policy"), rewardContent);
+            rewardBridge = new me.calo.islands.content.ActivityRewardBridge(this, activities,
+                    rewardRules, me.calo.islands.content.ActivityRewardBridge.goldenClient(this));
+            signalTask = Bukkit.getScheduler().runTaskTimer(this, () -> {
+                try { activities.dispatchPendingSignals(100); rewardBridge.tick(); }
+                catch (Exception failure) { getLogger().warning("Activity signal retry pending: "
+                        + failure.getClass().getSimpleName()); }
+            }, 1L, 20L);
+            getCommand("caloactivity").setExecutor(new me.calo.islands.command.PointDefenseCommand(
+                    pointDefense, objectives, getLogger()));
             var menu = new me.calo.islands.gui.CaloAdminMenu(this, ui, regions, selections, externalSelection,
-                    preview, command, new me.calo.islands.core.AdminTeleportService(regions, teleportAuthorities), store);
+                    preview, command, teleport, store);
+            menu.setObjectiveService(objectives);
+            menu.setObjectiveCatalog(objectiveCatalog);
             command.setMenu(menu::open);
+            command.setServices(teleport, preview);
             Bukkit.getPluginManager().registerEvents(ui, this);
             Bukkit.getPluginManager().registerEvents(menu, this);
             Bukkit.getPluginManager().registerEvents(new RegionAccessListener(regions, messages, protection), this);
             Bukkit.getPluginManager().registerEvents(new RegionProtectionListener(
-                    new RegionProtectionPolicy(regions, protection, authorities)), this);
+                    new RegionProtectionPolicy(regions, protection, authorities), objectives), this);
             Bukkit.getPluginManager().registerEvents(new SelectionSessionListener(selections, externalSelection), this);
             if (externalSelection == null)
                 Bukkit.getPluginManager().registerEvents(new RegionSelectionListener(selections, tool, messages), this);
@@ -102,7 +169,30 @@ public final class CaloIslandsPlugin extends JavaPlugin {
     }
 
     @Override
+    public void reloadConfig() {
+        if (previewService != null) previewService.clearAll();
+        super.reloadConfig();
+        if (previewService != null) {
+            PreviewSettings settings = PreviewSettings.read(getConfig().getConfigurationSection("preview"));
+            previewService.updateSettings(settings);
+            if (previewTask != null) previewTask.cancel();
+            previewTask = Bukkit.getScheduler().runTaskTimer(this,
+                    () -> previewService.renderFrame(Bukkit.getOnlinePlayers()), 1L, settings.intervalTicks());
+        }
+    }
+
+    @Override
     public void onDisable() {
+        if (signalTask != null) { signalTask.cancel(); signalTask = null; }
+        if (rewardBridge != null) { rewardBridge.stop(); rewardBridge = null; }
+        if (previewService != null) previewService.clearAll();
+        if (pointDefense != null) { pointDefense.stop(); pointDefense = null; }
+        if (objectives != null) { objectives.stop(); objectives = null; }
+        if (activities != null) {
+            try { activities.shutdown(); }
+            catch (Exception failure) { getLogger().warning("Activity cleanup needs recovery: " + failure.getClass().getSimpleName()); }
+            activities = null;
+        }
         if (previewTask != null) {
             previewTask.cancel();
             previewTask = null;

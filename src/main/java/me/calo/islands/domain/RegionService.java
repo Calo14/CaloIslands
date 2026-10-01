@@ -51,7 +51,7 @@ public final class RegionService {
                 throw new IllegalArgumentException("City " + city.id() + " would be outside the region");
             }
         }
-        Region next = new Region(id, current.world(), bounds, false, current.version() + 1);
+        Region next = new Region(id, current.world(), bounds, false, current.version() + 1, current.destination());
         requireNoOverlap(next);
         save(next, current.version());
         withRegion(next);
@@ -62,15 +62,31 @@ public final class RegionService {
         Region current = requireRegion(id);
         if (current.active() == active) return current;
         if (active) requireLoadedWorld(current.world());
-        Region next = new Region(id, current.world(), current.bounds(), active, current.version() + 1);
+        Region next = new Region(id, current.world(), current.bounds(), active, current.version() + 1, current.destination());
         save(next, current.version());
         withRegion(next);
         return next;
     }
 
+    public synchronized Region setRegionPoint(String id, Destination destination) throws SQLException {
+        Region current = requireRegion(id);
+        if (java.util.Objects.equals(current.destination(), destination)) return current;
+        if (destination != null) {
+            if (!current.world().equals(destination.world())) throw new IllegalArgumentException("El punto debe estar en el mundo de la región.");
+            WorldHeight height = requireLoadedWorld(destination.world());
+            if (destination.y() < height.min() || destination.y() >= height.maxExclusive())
+                throw new IllegalArgumentException("La altura del punto no es válida.");
+        }
+        Region next = new Region(id, current.world(), current.bounds(), current.active(), current.version()+1, destination);
+        save(next, current.version()); withRegion(next); return next;
+    }
+
     public synchronized City createCity(String id, String regionId, double x, double y, double z) throws SQLException {
+        return createCity(id, regionId, x, y, z, 0, 0);
+    }
+    public synchronized City createCity(String id, String regionId, double x, double y, double z, float yaw, float pitch) throws SQLException {
         Region region = requireRegion(regionId);
-        City city = new City(id, regionId, region.world(), x, y, z, 1);
+        City city = new City(id, regionId, region.world(), x, y, z, 1, yaw, pitch);
         Optional<City> existing = store.city(id);
         if (existing.isPresent()) {
             if (existing.get().equals(city)) return existing.get();
@@ -83,13 +99,17 @@ public final class RegionService {
     }
 
     public synchronized City moveCity(String id, String regionId, double x, double y, double z) throws SQLException {
+        City old = requireCity(id);
+        return moveCity(id, regionId, x, y, z, old.yaw(), old.pitch());
+    }
+    public synchronized City moveCity(String id, String regionId, double x, double y, double z, float yaw, float pitch) throws SQLException {
         City current = requireCity(id);
         Region region = requireRegion(regionId);
         if (current.regionId().equals(regionId) && Double.compare(current.x(), x) == 0
-                && Double.compare(current.y(), y) == 0 && Double.compare(current.z(), z) == 0) return current;
+                && Double.compare(current.y(), y) == 0 && Double.compare(current.z(), z) == 0 && current.yaw() == yaw && current.pitch() == pitch) return current;
         requireLoadedWorld(region.world());
         requireInside(region, x, y, z);
-        City next = new City(id, regionId, region.world(), x, y, z, current.version() + 1);
+        City next = new City(id, regionId, region.world(), x, y, z, current.version() + 1, yaw, pitch);
         if (!store.update(next, current.version())) throw new IllegalStateException("City changed concurrently");
         return next;
     }

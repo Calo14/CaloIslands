@@ -32,6 +32,22 @@ final class CaloAdminMenuTest {
         return new CaloAdminMenu(f.plugin, f.ui, regions, selections, source, previews, command, mock(AdminTeleportService.class), mock(RegionStore.class));
     }
     private void click(AdminUiTest.Fixture f, int slot) throws Exception { f.ui.click(f.click(slot, ClickType.LEFT)); f.drain(); if (f.title() != null) f.awaitQuery(); }
+    @Test void regionWithoutDestinationHasDisabledTravelAndPointButtonsUseCapturedPlayerLocation() throws Exception {
+        try(var f=new AdminUiTest.Fixture()) {
+            var menu=menu(f); menu.open(f.player); click(f,10); click(f,10);
+            assertEquals("§7Ir a región",f.top.get().getItem(10).getItemMeta().getDisplayName());
+            click(f,10); verify(regions,never()).setRegionPoint(anyString(),any());
+            click(f,31); verify(regions).setRegionPoint("region_a",new Destination("world_a",5.5,64,5.5,0,0));
+            Region old=r.get(); r.set(new Region(old.id(),old.world(),old.bounds(),old.active(),2,new Destination("world_a",5.5,64,5.5,0,0)));
+            menu.regionList(f.player,0); click(f,10); assertEquals("§6Ir a región",f.top.get().getItem(10).getItemMeta().getDisplayName());
+            click(f,32); verify(regions).setRegionPoint("region_a",null);
+            var close=mock(org.bukkit.event.inventory.InventoryCloseEvent.class); when(close.getInventory()).thenReturn(f.top.get()); when(close.getPlayer()).thenReturn(f.player);
+            menu.close(close); verify(previews).stop(f.player.getUniqueId());
+            var quit=mock(org.bukkit.event.player.PlayerQuitEvent.class); when(quit.getPlayer()).thenReturn(f.player); menu.quit(quit);
+            verify(previews,times(2)).stop(f.player.getUniqueId());
+        }
+    }
+
     @Test void regionStateDeletionConfirmationAndReopeningUseServiceExactlyOnce() throws Exception {
         try (var f = new AdminUiTest.Fixture()) {
             var menu = menu(f); menu.open(f.player); assertEquals("§6Regiones", f.top.get().getItem(10).getItemMeta().getDisplayName());
@@ -48,13 +64,34 @@ final class CaloAdminMenuTest {
     @Test void cityListMoveAndDeletePreserveCapturedLocationAndRequireConfirmation() throws Exception {
         try (var f = new AdminUiTest.Fixture()) {
             var menu = menu(f); menu.open(f.player); click(f, 12); assertTrue(f.title().contains("Ciudades")); click(f, 10);
-            when(regions.moveCity("city_a", "region_a", 5.5, 64, 5.5)).thenAnswer(call -> { City next = new City("city_a", "region_a", "world_a", 5.5, 64, 5.5, 2); c.set(next); return next; });
+            when(regions.moveCity("city_a", "region_a", 5.5, 64, 5.5, 0, 0)).thenAnswer(call -> { City next = new City("city_a", "region_a", "world_a", 5.5, 64, 5.5, 2); c.set(next); return next; });
             click(f, 13); verify(regions, never()).moveCity(anyString(), anyString(), anyDouble(), anyDouble(), anyDouble());
-            click(f, 30); verify(regions).moveCity("city_a", "region_a", 5.5, 64, 5.5); click(f, 10);
+            click(f, 30); verify(regions).moveCity("city_a", "region_a", 5.5, 64, 5.5, 0, 0); click(f, 10);
             click(f, 16); click(f, 32); verify(regions, never()).deleteCity(anyString());
             doAnswer(call -> { c.set(null); return null; }).when(regions).deleteCity("city_a");
             click(f, 16); var confirm = f.click(30, ClickType.LEFT); f.ui.click(confirm); f.ui.click(confirm); f.drain(); f.awaitQuery();
             verify(regions, times(1)).deleteCity("city_a"); assertTrue(f.title().contains("Ciudades"));
+        }
+    }
+    @Test void cityDetailReturnsToSameFilteredPageAndUsesFriendlyName() throws Exception {
+        try (var f = new AdminUiTest.Fixture()) {
+            var menu = menu(f);
+            List<City> cities = new ArrayList<>();
+            for (int i = 0; i < 22; i++) cities.add(new City("city_" + String.format(Locale.ROOT, "%02d", i),
+                    "region_a", "world_a", 1.5, 64, 1.5, 1));
+            when(regions.cities()).thenReturn(cities);
+            menu.open(f.player); click(f, 10); click(f, 10); click(f, 16);
+            click(f, 53);
+            assertTrue(f.title().contains("Ciudades"));
+            assertEquals("§6City 21", f.top.get().getItem(10).getItemMeta().getDisplayName());
+            click(f, 10);
+            assertTrue(f.title().contains("Ciudad · City 21"));
+            click(f, 28); assertTrue(f.title().contains("Región · Region A"));
+            click(f, 48); assertTrue(f.title().contains("Ciudad · City 21"));
+            click(f, 48);
+            assertTrue(f.title().contains("Ciudades · Region A"));
+            assertEquals("§6Página 2", f.top.get().getItem(4).getItemMeta().getDisplayName());
+            assertEquals("§6City 21", f.top.get().getItem(10).getItemMeta().getDisplayName());
         }
     }
     @Test void worldEditSelectionModesAndPersonalPreviewDoNotReplaceOrClearSelection() throws Exception {
@@ -65,7 +102,7 @@ final class CaloAdminMenuTest {
             click(f, 12); assertEquals(RegionSelectionService.Mode.EXACT, selections.mode(f.player.getUniqueId()));
             click(f, 10); assertEquals(RegionSelectionService.Mode.FULLHEIGHT, selections.mode(f.player.getUniqueId()));
             click(f, 16); click(f, 10); assertTrue(selections.previewEnabled(f.player.getUniqueId())); verify(source, never()).clear(any());
-            verify(previews).clear(f.player.getUniqueId()); assertSame(selected, source.selection(f.player));
+            verify(previews).startSelection(f.player.getUniqueId()); assertSame(selected, source.selection(f.player));
         }
     }
     @Test void regionChangedBeforeConfirmationCannotBeDeleted() throws Exception {
@@ -80,7 +117,7 @@ final class CaloAdminMenuTest {
             var menu = menu(f); menu.open(f.player); click(f, 10); click(f, 10); click(f, 30); f.chat("city_new");
             when(f.player.getLocation()).thenReturn(new Location(world, 8.5, 70, 8.5));
             verify(regions, never()).createCity(anyString(), anyString(), anyDouble(), anyDouble(), anyDouble()); click(f, 30);
-            verify(regions).createCity("city_new", "region_a", 5.5, 64, 5.5);
+            verify(regions).createCity("city_new", "region_a", 5.5, 64, 5.5, 0, 0);
         }
     }
     @Test void createRegionUsesExactWorldEditBoundsAndOnlyThenClearsSelection() throws Exception {

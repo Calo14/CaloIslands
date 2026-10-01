@@ -19,7 +19,8 @@ final class AdminMenuCommandTest {
         assertTrue(command.onTabComplete(admin, bukkitCommand, "calo", new String[]{""}).isEmpty());
         when(admin.hasPermission("caloislands.admin")).thenReturn(true);
         command.onCommand(admin, bukkitCommand, "calo", new String[]{"menu"}); verify(menu).accept(admin);
-        assertEquals(List.of("region", "city", "here", "help", "menu"), command.onTabComplete(admin, bukkitCommand, "calo", new String[]{""}));
+        assertEquals(List.of("region", "city", "here", "help", "menu", "validate"),
+                command.onTabComplete(admin, bukkitCommand, "calo", new String[]{""}));
         assertEquals(List.of("exact"), command.onTabComplete(admin, bukkitCommand, "calo", new String[]{"region", "mode", "ex"}));
     }
 }
